@@ -184,7 +184,7 @@ function markConflictResolved(conflictId) {
   const note = $("resolved-note");
   note.style.display = "block";
   note.innerHTML =
-    `<b>✔ RESOLVED</b> — conflict${conflictId ? " #" + conflictId : ""} cleared: ` +
+    `<b>RESOLVED</b> — conflict${conflictId ? " #" + conflictId : ""} cleared: ` +
     `the two streams agree again and the monitor is back to NORMAL. ` +
     `The verdict above is the historical record of that conflict.`;
 }
