@@ -147,7 +147,7 @@ function onState(m) {
   $("t-cstat").textContent = m.camera_status;
   $("t-rail").textContent = m.gyro_rail_score.toFixed(2);
   $("t-inj").textContent = m.injected
-    ? "⚠ SYNTHETIC: " + m.injected : "none (real input)";
+    ? "SYNTHETIC: " + m.injected : "none (real input)";
   $("t-inj").style.color = m.injected ? "#fbbf24" : "";
 
   setOutcome("naive", m.descent.naive);
@@ -528,8 +528,8 @@ async function post(path) {
   try {
     const r = await fetch(path, { method: "POST" });
     const j = await r.json();
-    if (j.error) banner("⚠ " + j.error, 4000);
-  } catch (e) { banner("⚠ request failed: " + e.message, 4000); }
+    if (j.error) banner(j.error, 4000);
+  } catch (e) { banner("Request failed: " + e.message, 4000); }
 }
 
 $("b-gyro").onclick = () => post("/api/inject/gyro_saturation");

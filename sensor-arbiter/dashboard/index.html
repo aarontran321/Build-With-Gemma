@@ -178,12 +178,12 @@
 
 <div class="controls">
   <span class="muted">INJECT SYNTHETIC FAULT →</span>
-  <button id="b-gyro">⚡ Gyro saturation</button>
-  <button id="b-cam">🕶 Camera dark</button>
-  <button id="b-trans">〰 Transient blip</button>
+  <button id="b-gyro">Gyro saturation</button>
+  <button id="b-cam">Camera dark</button>
+  <button id="b-trans">Transient blip</button>
   <span class="sep"></span>
   <select id="replaysel"></select>
-  <button id="b-replay">▶ Replay golden run</button>
+  <button id="b-replay">Replay golden run</button>
   <span class="sep"></span>
   <button id="b-report">📄 Latest decision report</button>
   <button id="b-session">🗒 Session report</button>
@@ -240,7 +240,7 @@
   <div style="display:flex; flex-direction:column; gap:12px;">
     <div class="panel" id="diag">
       <h2>Gemma fault arbitration</h2>
-      <div id="thinking">⏳ conflict detected — Gemma arbiter woken, diagnosing…</div>
+      <div id="thinking">Conflict detected — Gemma arbiter woken, diagnosing…</div>
       <div class="fault" id="fault">— no conflict —</div>
       <div class="kv">
         <span class="k">faulty sensor</span><span id="faulty">—</span>
@@ -274,7 +274,7 @@
       <div class="previewbox">
         <img id="phone-preview" alt="Live phone camera with optical-flow vectors">
         <div id="preview-empty">Waiting for the phone camera…<br>Open /phone/ and enable sensors.</div>
-        <span id="preview-live" class="preview-live">● LIVE · FLOW VECTORS</span>
+        <span id="preview-live" class="preview-live">LIVE · FLOW VECTORS</span>
       </div>
       <div class="legendnote">Low-rate visual proof only. Preview frames are isolated
       from sensor telemetry and are never used by the arbiter.</div>
