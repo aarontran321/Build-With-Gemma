@@ -43,6 +43,7 @@ const SEND_PERIOD_MS = 50;      // ~20 Hz sample uplink (spec: 40–60 ms)
 const PROC_PERIOD_MS = 66;      // ~15 Hz flow processing budget
 const FLOW_SCALE = 1.4;         // maps residual px/frame into a convenient
                                 // plotting range; uncalibrated by design
+const PREVIEW_PERIOD_MS = 250;  // 4 fps; visual proof, never control telemetry
 
 /* ---------------------------- state ---------------------------- */
 
@@ -51,6 +52,7 @@ const video = $("video"), preview = $("preview");
 const pctx = preview.getContext("2d");
 
 let ws = null, wsOpen = false, sent = 0;
+let previewWs = null, previewWsOpen = false, lastPreview = 0, previewEncoding = false;
 let gyro = { x: 0, y: 0, z: 0 };      // rad/s (DeviceMotion gives deg/s)
 let gyroSeen = false;
 let flowMag = 0, flowConf = 0;
@@ -74,6 +76,34 @@ function connect() {
     setTimeout(connect, 1000);
   };
   ws.onerror = () => { try { ws.close(); } catch (_) {} };
+}
+
+function connectPreview() {
+  previewWs = new WebSocket(`${wsUrl().replace(/\/ws\/phone$/, "/ws/preview/phone")}`);
+  previewWs.binaryType = "arraybuffer";
+  previewWs.onopen = () => { previewWsOpen = true; };
+  previewWs.onclose = () => {
+    previewWsOpen = false;
+    setTimeout(connectPreview, 1000);
+  };
+  previewWs.onerror = () => { try { previewWs.close(); } catch (_) {} };
+}
+
+function sendPreview(now) {
+  if (!previewWsOpen || previewWs.readyState !== 1 || previewEncoding ||
+      now - lastPreview < PREVIEW_PERIOD_MS || previewWs.bufferedAmount > 100000) return;
+  lastPreview = now;
+  previewEncoding = true;
+  preview.toBlob(async (blob) => {
+    try {
+      if (blob && previewWsOpen && previewWs.readyState === 1 &&
+          previewWs.bufferedAmount < 100000) {
+        previewWs.send(await blob.arrayBuffer());
+      }
+    } finally {
+      previewEncoding = false;
+    }
+  }, "image/jpeg", 0.58);
 }
 
 function sendSample() {
@@ -213,6 +243,7 @@ function processFrame(now) {
       flowMag = flowHist.reduce((a, b) => a + b, 0) / flowHist.length;
       flowConf = conf;
       drawPreview(gray, vectors);
+      sendPreview(now);
       $("v-cam").textContent = flowMag.toFixed(2);
       $("v-conf").textContent = flowConf.toFixed(2);
       setDot("cam", conf > 0.3, "");
@@ -267,6 +298,7 @@ async function start() {
 
     $("start").style.display = "none";
     connect();
+    connectPreview();
     setInterval(sendSample, SEND_PERIOD_MS);
     requestAnimationFrame(processFrame);
     setTimeout(() => {

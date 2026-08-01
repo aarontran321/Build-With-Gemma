@@ -50,6 +50,7 @@ class Hub:
         self.descent = DualDescent()
         self.recorder = SessionRecorder(os.path.join(ROOT, config.SESSIONS_DIR))
         self.dashboards: Set[WebSocket] = set()
+        self.preview_dashboards: Set[WebSocket] = set()
         self.mode = "live"          # "live" | "replay"
         self.replay_name: Optional[str] = None
         self._replay_task: Optional[asyncio.Task] = None
@@ -271,6 +272,43 @@ async def ws_dashboard(ws: WebSocket):
             await ws.receive_text()  # keepalive/pings; content ignored
     except WebSocketDisconnect:
         hub.dashboards.discard(ws)
+
+
+@app.websocket("/ws/preview/phone")
+async def ws_preview_phone(ws: WebSocket):
+    """Relay low-rate JPEG previews separately from flight telemetry.
+
+    Preview traffic is deliberately lossy and isolated: a slow or absent
+    dashboard can never delay phone samples or arbitration. Replays suppress
+    live frames so recorded input is never presented as a live camera feed.
+    """
+    await ws.accept()
+    try:
+        while True:
+            frame = await ws.receive_bytes()
+            if hub.mode != "live" or len(frame) > 100_000:
+                continue
+            dead = []
+            for dashboard in hub.preview_dashboards:
+                try:
+                    await dashboard.send_bytes(frame)
+                except Exception:
+                    dead.append(dashboard)
+            for dashboard in dead:
+                hub.preview_dashboards.discard(dashboard)
+    except WebSocketDisconnect:
+        pass
+
+
+@app.websocket("/ws/preview/dashboard")
+async def ws_preview_dashboard(ws: WebSocket):
+    await ws.accept()
+    hub.preview_dashboards.add(ws)
+    try:
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        hub.preview_dashboards.discard(ws)
 
 
 # static AFTER routes so /api and /ws take precedence

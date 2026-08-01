@@ -114,8 +114,11 @@ function refreshCharts(latestX) {
 /* ---------------- message handling ---------------- */
 
 let lastInjected = null;
+let currentMode = "live";
 
 function onState(m) {
+  currentMode = m.mode;
+  setPreviewMode(m.mode);
   if (t0 === null) t0 = m.t;
   const x = m.t - t0;
   push(buf.gyro, x, m.gyro_mag);
@@ -225,6 +228,19 @@ function resetView() {
   refreshCharts(0);
 }
 
+function setPreviewMode(mode) {
+  const replay = mode === "replay";
+  if (replay) {
+    $("phone-preview").style.display = "none";
+    $("preview-live").style.display = "none";
+    $("preview-empty").style.display = "grid";
+    $("preview-empty").innerHTML = "REPLAY MODE<br>live camera preview paused";
+  } else if (!$("phone-preview").src) {
+    $("preview-empty").style.display = "grid";
+    $("preview-empty").innerHTML = "Waiting for the phone camera…<br>Open /phone/ and enable sensors.";
+  }
+}
+
 function banner(text, ms) {
   const b = $("banner");
   b.textContent = text; b.style.display = "block";
@@ -271,6 +287,29 @@ function connect() {
   };
 }
 connect();
+
+/* Preview uses a separate lossy socket so video can never block telemetry. */
+function connectPreview() {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const ws = new WebSocket(`${proto}://${location.host}/ws/preview/dashboard`);
+  ws.binaryType = "blob";
+  ws.onopen = () => ws.send("ready");
+  ws.onclose = () => setTimeout(connectPreview, 1000);
+  ws.onerror = () => { try { ws.close(); } catch (_) {} };
+  ws.onmessage = (e) => {
+    if (currentMode !== "live") return;
+    const img = $("phone-preview");
+    const old = img.dataset.objectUrl;
+    const url = URL.createObjectURL(e.data);
+    img.dataset.objectUrl = url;
+    img.onload = () => { if (old) URL.revokeObjectURL(old); };
+    img.src = url;
+    img.style.display = "block";
+    $("preview-empty").style.display = "none";
+    $("preview-live").style.display = "inline-block";
+  };
+}
+connectPreview();
 
 /* ---------------- controls ---------------- */
 
