@@ -61,6 +61,22 @@ affect telemetry; the dashboard shows "diagnosing…" until it lands, and
 `GEMMA_TIMEOUT_S` caps the wait before the deterministic fallback completes
 the decision (labeled as such).
 
+**Verify `GEMMA_TIMEOUT_S` on the actual demo machine.** The 15 s default is
+sized for `gemma4:e4b` on the reference laptop. A slower host or a smaller
+model can exceed it, and then *every* verdict silently arrives labeled
+`FALLBACK` — the demo still lands, but the Gemma story is invisible. Measured
+here on a Windows host:
+
+| model | verdict latency | diagnoses correct |
+|---|---|---|
+| `gemma4:e2b` | 20–30 s (needs `GEMMA_TIMEOUT_S=45`) | 2 of 3 — misreads `camera_dark` as `transient_disagreement` |
+| `gemma3:4b` | 55–66 s | 1 of 3 — not usable for this demo |
+
+If a run shows `FALLBACK` when Ollama is up, the timeout is too tight for the
+host, not a bug. Note the deterministic fallback classifies `camera_dark`
+*correctly*, so a fallback-labeled camera run can look better than a small
+model's real verdict.
+
 Note: the arbiter calls Ollama with `think=False`. Gemma 4's hidden thinking
 phase can consume the whole token budget and return empty content under
 schema-constrained decoding; the verdict schema already demands explicit
@@ -68,6 +84,45 @@ evidence and an alternative hypothesis.
 
 The server warms the model at startup so the first conflict is not eaten by
 model-load time. Keep Ollama running before the demo.
+
+## Rehearse the live path without a phone (virtual phone)
+
+Golden replay exercises the pipeline but takes the *replay* branch. To drive
+the **live** path — injection buttons, live descent, `mode: live` — without a
+phone, HTTPS, or a second device:
+
+```bash
+# clean stream; drive faults from the dashboard buttons
+python scripts/virtual_phone.py
+
+# scripted end-to-end landing demo: reset, then inject at t+8s
+python scripts/virtual_phone.py --auto gyro_saturation
+```
+
+`scripts/virtual_phone.py` speaks the same `PhoneSample` format over the same
+`/ws/phone` socket at the same 20 Hz, so everything downstream of the socket
+runs unmodified — the server cannot tell it from `phone/capture.js`. Its gyro
+is a hand-held wobble; its camera proxy is derived from the same motion in
+proxy units with one frame of lag and independent noise, the same relationship
+`scripts/make_golden.py` uses.
+
+**Label it honestly.** It is a simulated sensor node, not a phone. It shows
+the two-stream contract is satisfiable and the pipeline is correct on
+correctly-*structured* data. It does **not** show that the block-matching
+estimator in `capture.js` recovers rotation from real pixels — only the real
+phone runs that code, so only the real phone demonstrates it.
+
+`--source-fault SCENARIO` corrupts the stream at the source instead of on the
+server, which shows the monitor detecting a fault nothing told it about.
+Caveat: the descent sim measures naive error against the injector-recorded
+clean values (`descent.py::_naive_error_rate`), so a source-applied fault
+leaves the NAIVE vehicle with no ground truth and it will not crash.
+Arbitration still runs. For the full dual-descent story, use server-side
+injection.
+
+Timing: the descent runs from 3700 m at 80 m/s, so both vehicles touch down
+about 46 s after the stream starts. Inject within the first ~25 s, or press
+**RESET** first.
 
 ## Live demo with the phone
 
@@ -77,23 +132,78 @@ triggered by a user tap.
 
 Two documented options:
 
-**Option A — tunnel (easiest):**
+**Option A — tunnel (easiest; no firewall or cert work).**
+
+The server must run **plain HTTP** behind a tunnel — the tunnel terminates
+TLS and forwards to a local HTTP port:
+
 ```bash
+uvicorn server.main:app --host 0.0.0.0 --port 8000
+```
+
+*ngrok:*
+```bash
+ngrok config add-authtoken <token>    # once, from dashboard.ngrok.com
 ngrok http 8000
 ```
-Open `https://<your-id>.ngrok-free.app/phone/` on the phone. The page
-connects back over WSS through the same tunnel. (The tunnel is for the
-phone's TLS requirement only; inference stays local.)
+Open `https://<your-id>.ngrok-free.app/phone/` on the phone. Note ngrok v3
+starts no tunnel at all until that authtoken is configured, and the free tier
+serves an interstitial page on first visit.
+
+*cloudflared* — equivalent, and needs no account, which is handy on a machine
+that is not set up with ngrok:
+```bash
+winget install Cloudflare.cloudflared      # or: brew install cloudflared
+cloudflared tunnel --url http://localhost:8000 --no-autoupdate
+```
+It prints `https://<random-words>.trycloudflare.com`, new on every restart.
+
+Either way, open `<url>/phone/` on the phone and `<url>/dashboard/` (or
+`http://localhost:8000/dashboard/`) on the laptop.
+
+Both carry WebSockets, so `/ws/phone` and `/ws/dashboard` work unchanged. The
+tunnel exists only to satisfy the phone's TLS requirement — **inference stays
+local**, and no sensor data leaves the laptop except to your own browser.
+
+Note the tunnel URL is public: anyone holding it can open the dashboard and
+POST `/api/inject` or `/api/reset`. There is no auth on those routes. Fine for
+a demo you are running; stop the tunnel when you are done.
 
 **Option B — LAN with a self-signed cert (fully offline):**
+
+The cert must carry the laptop's LAN IP in a **subjectAltName**. Modern iOS
+and Android reject a bare `CN=<ip>` cert outright, so `-addext` is required,
+not optional.
+
 ```bash
+LAN_IP=$(ipconfig getifaddr en0)          # macOS; on Windows read `ipconfig`
 openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem \
-        -days 30 -subj "/CN=$(ipconfig getifaddr en0)"
+        -days 30 -subj "/CN=$LAN_IP" \
+        -addext "subjectAltName=IP:$LAN_IP,IP:127.0.0.1,DNS:localhost"
 uvicorn server.main:app --host 0.0.0.0 --port 8443 \
         --ssl-keyfile key.pem --ssl-certfile cert.pem
 ```
-On the phone open `https://<laptop-LAN-IP>:8443/phone/` and accept the
-certificate warning (iOS: you may need to view the cert and trust it).
+
+Open `https://<laptop-LAN-IP>:8443/phone/` on the phone and accept the
+certificate warning (iOS: you may need to view the cert and trust it). Run
+the laptop dashboard on the **same** HTTPS origin —
+`https://localhost:8443/dashboard/` — because one server process is one
+pipeline; a second server on another port has its own independent state and
+would not see the phone at all.
+
+Both devices must be on the same network, and the laptop must accept inbound
+connections on 8443. On Windows the firewall matches the **exact executable
+path**, so an existing rule for the system Python does not cover
+`.venv\Scripts\python.exe`; add a port rule instead (elevated PowerShell):
+
+```powershell
+New-NetFirewallRule -DisplayName "Sensor Arbiter 8443" -Direction Inbound `
+  -Protocol TCP -LocalPort 8443 -Action Allow -Profile Private,Public
+```
+
+Corporate/campus and guest Wi-Fi often enable client isolation, which blocks
+phone→laptop traffic no matter what the firewall says. Use a phone hotspot or
+Option A if the phone cannot reach the page.
 
 Then:
 1. On the phone: tap **ENABLE SENSORS**, grant motion + camera. Point the
@@ -276,7 +386,7 @@ server/    monitor.py (detect + state machine)  arbiter.py (Gemma)
 phone/     index.html capture.js (gyro + pixels-only optical flow)
 dashboard/ index.html dashboard.js vendor/chart.umd.min.js (pinned, local)
 data/      three committed golden runs (jsonl)
-scripts/   make_golden.py  replay_check.py
+scripts/   make_golden.py  replay_check.py  virtual_phone.py (simulated node)
 tests/     pytest suites for schemas, monitor, guardrail, fallback, descent,
            mission log + reports, narrator, PDF export
 ```
