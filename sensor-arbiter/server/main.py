@@ -178,7 +178,7 @@ class Hub:
 
 
 hub = Hub()
-app = FastAPI(title="Sensor Arbiter")
+app = FastAPI(title="Janus — Sensor Arbiter")
 
 
 @app.on_event("startup")

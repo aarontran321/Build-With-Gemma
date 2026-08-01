@@ -1,4 +1,4 @@
-# Sensor Arbiter — Triage In Light Speed (Track 2: Trajectory & Orbit)
+# Janus — Sensor Arbiter · Triage In Light Speed (Track 2: Trajectory & Orbit)
 
 **Edge-deployed Gemma as the onboard fault-arbitration engine for a
 spacecraft that is minutes from help and must decide alone.**

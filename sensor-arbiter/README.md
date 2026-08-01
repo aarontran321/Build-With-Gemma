@@ -1,4 +1,8 @@
-# Sensor Arbiter — deep-space descent fault arbitration with edge Gemma
+# Janus — Sensor Arbiter
+
+**Deep-space descent fault arbitration with edge Gemma.** Named for the
+two-faced Roman god of gates and transitions: Janus watches two independent
+witnesses of the same motion and judges, alone, which face to believe.
 
 A phone stands in for a spacecraft during descent. Two independent sensors
 observe its rotation: the IMU gyroscope, and a **camera-derived

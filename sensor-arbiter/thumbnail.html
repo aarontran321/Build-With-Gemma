@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>thumbnail</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1280px; height: 720px; overflow: hidden; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background:
+      radial-gradient(1100px 600px at 78% 18%, #13203a 0%, rgba(19,32,58,0) 55%),
+      radial-gradient(900px 500px at 12% 88%, #0e2b26 0%, rgba(14,43,38,0) 60%),
+      #0b0f1a;
+    color: #dfe7f3; position: relative;
+  }
+  /* faint starfield */
+  .star { position: absolute; border-radius: 50%; background: #9fb4d0; }
+
+  .badge {
+    position: absolute; top: 44px; left: 56px;
+    font-size: 17px; font-weight: 800; letter-spacing: .18em;
+    color: #5eead4; border: 1.5px solid #2dd4bf; border-radius: 999px;
+    padding: 8px 18px; background: rgba(16,59,54,.55);
+  }
+  h1 {
+    position: absolute; top: 96px; left: 56px;
+    font-size: 92px; font-weight: 900; letter-spacing: .015em; line-height: 1;
+    color: #f1f5fb;
+  }
+  h1 span { color: #5eead4; }
+  .tag {
+    position: absolute; top: 322px; left: 58px; width: 560px;
+    font-size: 26px; line-height: 1.42; color: #b9c7da; font-weight: 500;
+  }
+  .tag b { color: #f1f5fb; }
+
+  .chartwrap {
+    position: absolute; right: 48px; top: 84px; width: 560px; height: 340px;
+    background: rgba(17,24,39,.85); border: 1.5px solid #24334d;
+    border-radius: 18px; padding: 18px 20px 8px;
+  }
+  .chartwrap .cap { font-size: 14px; letter-spacing: .14em; color: #8fa3bd;
+                    font-weight: 700; margin-bottom: 4px; }
+  .legend { position: absolute; top: 46px; left: 22px; font-size: 15px; }
+  .legend div { margin-bottom: 3px; font-weight: 600; }
+  .lg { color: #60a5fa; } .lc { color: #5eead4; }
+  .raillbl { position: absolute; top: 84px; right: 26px; color: #f87171;
+             font-size: 15px; font-weight: 800; letter-spacing: .04em; }
+  .injlbl { position: absolute; bottom: 66px; left: 258px; color: #fbbf24;
+            font-size: 13.5px; font-weight: 800; letter-spacing: .08em; }
+
+  .verdict {
+    position: absolute; right: 48px; top: 446px; width: 560px;
+    background: rgba(16,59,54,.5); border: 1.5px solid #2dd4bf;
+    border-radius: 16px; padding: 16px 22px;
+  }
+  .verdict .who { font-size: 13px; letter-spacing: .16em; color: #5eead4;
+                  font-weight: 800; margin-bottom: 6px; }
+  .verdict .what { font-size: 24px; font-weight: 800; color: #f1f5fb; }
+  .verdict .what code { font-family: ui-monospace, Menlo, monospace;
+                        color: #5eead4; font-size: 22px; }
+
+  .outs { position: absolute; left: 56px; bottom: 118px; display: flex; gap: 18px; }
+  .out { border-radius: 14px; padding: 14px 22px; min-width: 262px; }
+  .out .who { font-size: 13px; letter-spacing: .14em; color: #8fa3bd; font-weight: 800; }
+  .out .what { font-size: 34px; font-weight: 900; margin-top: 2px; }
+  .crash { border: 2px solid #f87171; background: rgba(32,10,12,.75); }
+  .crash .what { color: #f87171; }
+  .safe { border: 2px solid #34d399; background: rgba(6,35,26,.6); }
+  .safe .what { color: #34d399; }
+  .out .sub { font-size: 14.5px; color: #9fb4d0; margin-top: 2px; }
+
+  .foot {
+    position: absolute; left: 56px; bottom: 46px; font-size: 18px;
+    color: #9fb4d0; font-weight: 600; letter-spacing: .02em;
+  }
+  .foot b { color: #5eead4; }
+  .dot { color: #33415e; padding: 0 10px; }
+</style>
+</head>
+<body>
+  <!-- starfield -->
+  <div class="star" style="top:60px;left:700px;width:2px;height:2px;opacity:.7"></div>
+  <div class="star" style="top:150px;left:1180px;width:3px;height:3px;opacity:.5"></div>
+  <div class="star" style="top:320px;left:640px;width:2px;height:2px;opacity:.6"></div>
+  <div class="star" style="top:520px;left:1040px;width:2px;height:2px;opacity:.45"></div>
+  <div class="star" style="top:640px;left:760px;width:2px;height:2px;opacity:.5"></div>
+  <div class="star" style="top:250px;left:60px;width:2px;height:2px;opacity:.5"></div>
+  <div class="star" style="top:600px;left:180px;width:3px;height:3px;opacity:.4"></div>
+  <div class="star" style="top:430px;left:520px;width:2px;height:2px;opacity:.6"></div>
+
+  <div class="badge">BUILT WITH GEMMA · ON-DEVICE · TRACK 2 — DEEP SPACE NAVIGATION</div>
+  <h1>JANUS<br><span style="font-size:44px; letter-spacing:.22em;">SENSOR&nbsp;ARBITER</span></h1>
+  <p class="tag">Two independent witnesses, one judgment: when a spacecraft's
+     sensors disagree, an onboard <b>Gemma</b> decides — in seconds, offline,
+     minutes from help — <b>which one is lying.</b></p>
+
+  <div class="chartwrap">
+    <div class="cap">TWO INDEPENDENT WITNESSES, ONE FAULT</div>
+    <svg width="520" height="286" viewBox="0 0 520 286">
+      <!-- grid -->
+      <g stroke="#1f2b3f" stroke-width="1">
+        <line x1="0" y1="60"  x2="520" y2="60"/>
+        <line x1="0" y1="130" x2="520" y2="130"/>
+        <line x1="0" y1="200" x2="520" y2="200"/>
+        <line x1="0" y1="258" x2="520" y2="258"/>
+      </g>
+      <!-- rail level -->
+      <line x1="230" y1="34" x2="520" y2="34" stroke="#7f1d1d" stroke-width="1.5" stroke-dasharray="7 6"/>
+      <!-- injection marker -->
+      <line x1="238" y1="16" x2="238" y2="270" stroke="#fbbf24" stroke-width="2" stroke-dasharray="6 6"/>
+      <!-- camera trace: keeps wobbling truthfully -->
+      <path d="M0,206 C18,192 30,224 48,212 C66,200 78,228 96,214 C114,200 128,226 146,210
+               C164,194 178,224 196,210 C214,196 226,224 244,212 C262,200 276,226 294,210
+               C312,194 326,222 344,208 C362,194 376,224 394,212 C412,200 426,226 444,210
+               C462,194 476,222 494,208 C506,199 514,210 520,206"
+            fill="none" stroke="#5eead4" stroke-width="4" stroke-linecap="round"/>
+      <!-- gyro trace: agrees, then ramps to the rail and pins flat -->
+      <path d="M0,212 C18,198 30,228 48,216 C66,204 78,232 96,218 C114,204 128,230 146,214
+               C164,198 178,228 196,214 C214,202 226,222 238,214
+               C252,196 258,120 268,74 C276,44 288,34 300,34
+               L520,34"
+            fill="none" stroke="#60a5fa" stroke-width="4" stroke-linecap="round"/>
+      <!-- rail glow point -->
+      <circle cx="300" cy="34" r="7" fill="#f87171"/>
+    </svg>
+    <div class="legend">
+      <div class="lg">— IMU gyro</div>
+      <div class="lc">— camera flow (pixels only)</div>
+    </div>
+    <div class="raillbl">PINNED @ RAIL — the Schiaparelli fault</div>
+    <div class="injlbl">FAULT INJECTED ⚡</div>
+  </div>
+
+  <div class="verdict">
+    <div class="who">⚡ GEMMA VERDICT — 2.5 s, LOCAL, WOKEN ONCE PER CONFLICT</div>
+    <div class="what"><code>gyro_saturation</code> → trust camera · guardrail validated</div>
+  </div>
+
+  <div class="outs">
+    <div class="out crash">
+      <div class="who">WITHOUT ARBITRATION</div>
+      <div class="what">CRASH</div>
+      <div class="sub">trusts the lying gyro · 150 m/s impact</div>
+    </div>
+    <div class="out safe">
+      <div class="who">GEMMA + GUARDRAIL</div>
+      <div class="what">SAFE</div>
+      <div class="sub">switches to camera · lands softly</div>
+    </div>
+  </div>
+
+  <div class="foot"><b>100% offline</b><span class="dot">•</span>real phone sensors
+    <span class="dot">•</span>LLM proposes, code disposes
+    <span class="dot">•</span>gemma4 via Ollama</div>
+</body>
+</html>
