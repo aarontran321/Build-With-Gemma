@@ -208,6 +208,12 @@ function onDecision(m) {
   } else {
     ov.style.display = "none";
   }
+  // Straight from the verdict to the report that explains it. A decision
+  // replayed in the "hello" backfill carries no report id — fall back to
+  // "latest", which resolves server-side to this same decision.
+  const link = $("diag-report");
+  link.href = `/api/report/${m.report_id || "latest"}.html`;
+  link.style.display = "inline-block";
   if (t0 !== null) markers.push({ x: buf.gyro.length ? buf.gyro[buf.gyro.length - 1].x : 0,
                                   label: "DECISION", color: "#5eead4" });
 }
@@ -223,6 +229,10 @@ function resetView() {
   $("confbar").firstElementChild.style.width = "0%";
   $("evd").innerHTML = ""; $("alt-hyp").textContent = "";
   $("override").style.display = "none";
+  $("diag-report").style.display = "none";
+  // The log deliberately survives a reset: what happened before it is still
+  // part of the session record, and the server keeps those reports too.
+  refreshReports();
   setOutcome("naive", { outcome: "DESCENDING", alt: 3700, est_alt: 3700, rate: 0, impact_speed: 0 });
   setOutcome("guarded", { outcome: "DESCENDING", alt: 3700, est_alt: 3700, rate: 0, impact_speed: 0 });
   refreshCharts(0);
@@ -247,6 +257,134 @@ function banner(text, ms) {
   if (ms) setTimeout(() => { b.style.display = "none"; }, ms);
 }
 
+/* ---------------- mission log ---------------- */
+
+/* The log panel is append-only and capped, mirroring the server's ring
+ * buffer: a long demo must not grow the DOM without bound. Auto-scroll
+ * pauses as soon as the operator scrolls up, so reading history is never
+ * yanked away by an incoming event. */
+
+const LOG_MAX_ROWS = 400;
+// "Key events" filter: what someone reviewing the demo actually needs.
+const KEY_KINDS = new Set(["arbitration", "decision", "guardrail", "inject", "descent"]);
+let keyOnly = false;
+let lastSeq = 0;
+
+function logAtBottom() {
+  const el = $("logscroll");
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+}
+
+function addLogRow(e) {
+  if (e.seq <= lastSeq) return;   // backfill and live stream can overlap
+  lastSeq = e.seq;
+
+  const box = $("logscroll");
+  const empty = $("logempty");
+  if (empty) empty.remove();
+  const stick = logAtBottom();
+
+  const row = document.createElement("div");
+  row.className = "logrow sev-" + (e.severity || "info");
+  row.dataset.kind = e.kind;
+  if (keyOnly && !KEY_KINDS.has(e.kind)) row.style.display = "none";
+
+  const t = document.createElement("div");
+  t.className = "lt";
+  t.textContent = e.clock;
+  t.title = `${e.iso}  ·  mission ${e.mission_clock}` +
+            (e.stream_t !== null ? `  ·  stream t=${e.stream_t}s` : "");
+
+  const k = document.createElement("div");
+  k.className = "lk";
+  k.textContent = e.kind_label;
+
+  const msg = document.createElement("div");
+  msg.className = "lmsg";
+  msg.textContent = e.title;                       // textContent: never innerHTML
+  if (e.report_id) {
+    const a = document.createElement("a");
+    a.className = "rep";
+    a.href = `/api/report/${e.report_id}.html`;
+    a.target = "_blank"; a.rel = "noopener";
+    a.textContent = "report";
+    msg.appendChild(a);
+  }
+  const bits = Object.entries(e.detail || {})
+    .filter(([, v]) => v !== null && typeof v !== "object")
+    .slice(0, 5).map(([kk, v]) => `${kk}=${v}`).join("  ");
+  if (bits) {
+    const d = document.createElement("span");
+    d.className = "ldetail";
+    d.textContent = bits;
+    msg.appendChild(d);
+  }
+
+  row.append(t, k, msg);
+  box.appendChild(row);
+  while (box.children.length > LOG_MAX_ROWS) box.removeChild(box.firstChild);
+  if (stick) box.scrollTop = box.scrollHeight;
+}
+
+function applyLogFilter() {
+  for (const row of $("logscroll").children) {
+    if (!row.dataset.kind) continue;
+    row.style.display = (keyOnly && !KEY_KINDS.has(row.dataset.kind)) ? "none" : "";
+  }
+}
+
+/* ---------------- reports ---------------- */
+
+let latestReportId = null;
+
+function renderReports(reports) {
+  const box = $("replist");
+  box.innerHTML = "";
+  if (!reports || !reports.length) {
+    box.innerHTML = '<div class="muted" style="padding:6px">No reports yet. One is ' +
+      'generated automatically the moment a decision is made.</div>';
+    return;
+  }
+  for (const r of reports) {
+    const item = document.createElement("div");
+    item.className = "repitem";
+
+    const text = document.createElement("div");
+    const title = document.createElement("div");
+    title.className = "rtitle";
+    title.textContent = r.title;
+    const sub = document.createElement("div");
+    sub.className = "rsub";
+    sub.textContent = `${r.clock} · ${r.subtitle}`;
+    text.append(title, sub);
+
+    const act = document.createElement("div");
+    act.className = "ract";
+    const open = document.createElement("a");
+    open.className = "primary";
+    open.href = `/api/report/${r.report_id}.html`;
+    open.target = "_blank"; open.rel = "noopener";
+    open.textContent = "Open";
+    // Server-rendered PDF: a plain download, no browser print dialog.
+    const pdf = document.createElement("a");
+    pdf.href = `/api/report/${r.report_id}.pdf`;
+    pdf.textContent = "⬇ PDF";
+    act.append(open, pdf);
+
+    item.append(text, act);
+    box.appendChild(item);
+  }
+}
+
+async function refreshReports() {
+  try {
+    const r = await fetch("/api/reports");
+    const j = await r.json();
+    latestReportId = j.latest;
+    renderReports(j.reports);
+  } catch (_) { /* a failed refresh must never break the dashboard */ }
+}
+
 /* ---------------- websocket ---------------- */
 
 function connect() {
@@ -266,6 +404,15 @@ function connect() {
       case "arbitration": onArbitration(m); break;
       case "decision": onDecision(m); break;
       case "transition": break; // state chip is driven by state messages
+      case "log": addLogRow(m.event); break;
+      case "report_ready":
+        refreshReports();
+        banner(`📄 ${m.title} ready — Gemma is writing its summary. Download the PDF from the Reports panel.`, 9000);
+        break;
+      case "narrative_ready":
+        refreshReports();
+        if (m.source === "gemma") banner(`✍ Gemma wrote the report summary: “${m.headline}”`, 8000);
+        break;
       case "inject": banner(`Synthetic fault injected: ${m.scenario}`, 4000); break;
       case "reset": resetView(); banner("Session reset", 2500); break;
       case "replay":
@@ -280,7 +427,10 @@ function connect() {
             o.value = g; o.textContent = "golden: " + g;
             $("replaysel").appendChild(o);
           }
-        // a dashboard (re)connecting mid-session still shows the verdict
+        // a dashboard (re)connecting mid-session still shows the verdict,
+        // the log history and the reports already generated
+        for (const e of m.log || []) addLogRow(e);
+        if (m.reports) { renderReports(m.reports); refreshReports(); }
         if (m.last_decision) onDecision(m.last_decision);
         break;
     }
@@ -326,3 +476,24 @@ $("b-cam").onclick = () => post("/api/inject/camera_dark");
 $("b-trans").onclick = () => post("/api/inject/transient");
 $("b-reset").onclick = () => post("/api/reset");
 $("b-replay").onclick = () => post("/api/replay/" + $("replaysel").value);
+
+$("b-report").onclick = () =>
+  window.open(`/api/report/${latestReportId || "latest"}.html`, "_blank", "noopener");
+$("b-session").onclick = () =>
+  window.open("/api/report/session.html", "_blank", "noopener");
+
+$("b-logfilter").onclick = (e) => {
+  keyOnly = !keyOnly;
+  e.currentTarget.classList.toggle("on", keyOnly);
+  applyLogFilter();
+};
+$("b-logclear").onclick = () => {
+  // View-only: the server's record and every report are untouched.
+  $("logscroll").innerHTML = '<div id="logempty">View cleared — the server\'s ' +
+    'record is intact and still printable from the Reports panel.</div>';
+};
+$("logscroll").addEventListener("scroll", () => {
+  $("paused").style.display = logAtBottom() ? "none" : "inline";
+});
+
+refreshReports();
