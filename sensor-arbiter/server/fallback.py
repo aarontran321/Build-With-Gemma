@@ -50,6 +50,13 @@ def classify(ev: Evidence) -> Verdict:
             alternative_hypothesis="not evaluated (deterministic fallback rule)",
             recommended_action="continue on IMU; camera cannot corroborate",
             decision="continue_with_gyro",
+            # The gyro is the trusted source here and it is the only one with
+            # a signed axis, so a correction is at least possible. Whether it
+            # is permitted is the guardrail's call, not this rule's.
+            proposed_manoeuvre=("despin"
+                                if abs(ev.spin_rate_signed) >= config.DESPIN_DEADBAND_RAD_S
+                                else "hold_attitude"),
+            manoeuvre_axis=ev.spin_axis,
         )
 
     # Obvious case 3: short-lived divergence already heading back to agreement.

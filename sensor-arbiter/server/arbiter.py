@@ -56,7 +56,32 @@ SYSTEM_PROMPT = (
     "be one of: gyro, camera, none, both. evidence is a list of short "
     "diagnostic observations, not chain-of-thought. alternative_hypothesis "
     "briefly states why the most plausible competing explanation is less "
-    "likely."
+    "likely. "
+    # --- attitude control ---
+    "The vehicle must also decide whether to fire its thrusters to stop "
+    "rotating. The evidence carries spin_axis (the dominant body axis), "
+    "spin_rate_signed (rad/s, where the SIGN is the direction of rotation), "
+    "spin_axis_stability (1.0 is a clean single-axis spin, near 0 is a "
+    "tumble) and gyro_axis_rates per axis. Set proposed_manoeuvre to "
+    "'despin' only when a correction is both warranted and possible, "
+    "'hold_attitude' when it is not, or 'reduce_rate_partial' for a cautious "
+    "partial correction. Set manoeuvre_axis to the axis you would correct. "
+    "Critical asymmetry: ONLY the gyroscope reports a signed, axis-resolved "
+    "rate. The camera estimator reports magnitude alone — no axis, no "
+    "direction — so if you decide to trust the camera, no de-spin can be "
+    "commanded and you must choose hold_attitude. Likewise a railed or "
+    "flatlined gyro reports a limit rather than a measurement and cannot aim "
+    "a burn. Do NOT state burn durations or thrust levels: those are "
+    "computed from rigid-body mechanics once you have chosen the intent. "
+    # --- optional altitude context ---
+    "The evidence MAY carry altitude_m and seconds_to_ground from a GPS "
+    "altimeter. When present, seconds_to_ground is the time available before "
+    "impact: prefer hold_attitude or reduce_rate_partial when the budget is "
+    "short, since a manoeuvre that cannot finish spends propellant and leaves "
+    "the vehicle part-corrected. When these fields are null the altitude "
+    "input is off or unavailable — that means NO INFORMATION about the time "
+    "budget, not that time is short. Judge the other evidence on its own and "
+    "do not speculate about altitude you were not given."
 )
 
 RETRY_NUDGE = (

@@ -64,6 +64,18 @@
                    border-radius: 8px; background: #06231f; color: #5eead4;
                    border: 1px solid #2dd4bf; font-size: .78rem; }
   #resolved-note b { letter-spacing: .06em; }
+  /* attitude control */
+  #control { margin-top: 10px; padding: 9px 11px; border-radius: 9px;
+             background: #0c1322; border: 1px solid #2b3a52; }
+  .ctlhead { font-size: .64rem; letter-spacing: .12em; color: #8fa3bd;
+             font-weight: 800; margin-bottom: 6px; }
+  .ctlrow { display: grid; grid-template-columns: 118px 1fr; gap: 8px;
+            font-size: .8rem; padding: 2px 0; align-items: baseline; }
+  .ctlrow .k { color: #8fa3bd; font-size: .74rem; }
+  #ctl-executed.fire { color: #fbbf24; font-weight: 700; }
+  #ctl-executed.hold { color: #8fa3bd; }
+  #ctl-why { margin-top: 6px; font-size: .74rem; color: #7c8aa0; }
+  #ctl-why.refused { color: #fca5a5; }
   #diag .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px;
               margin: 8px 0; font-size: .84rem; }
   #diag .kv .k { color: #8fa3bd; }
@@ -188,6 +200,10 @@
   <button id="b-report">📄 Latest decision report</button>
   <button id="b-session">🗒 Session report</button>
   <span class="sep"></span>
+  <!-- Not a display preference: with altitude off the fields are stripped at
+       ingest, so the arbiter has no path to them at all. -->
+  <button id="b-alt" title="Toggle whether GPS altitude reaches the arbiter">Altitude input: OFF</button>
+  <span class="sep"></span>
   <button id="b-reset" class="danger">Reset</button>
 </div>
 
@@ -251,6 +267,16 @@
       <div id="alt-hyp"></div>
       <div id="override"></div>
       <div id="resolved-note"></div>
+
+      <!-- Attitude control: picking a sensor is only half a response; this is
+           what the vehicle actually does about the spin. -->
+      <div id="control">
+        <div class="ctlhead">ATTITUDE CONTROL — proposed vs executed</div>
+        <div class="ctlrow"><span class="k">arbiter proposed</span><span id="ctl-proposed">—</span></div>
+        <div class="ctlrow"><span class="k">executed</span><span id="ctl-executed">—</span></div>
+        <div class="ctlrow"><span class="k">spin at decision</span><span id="ctl-rate">—</span></div>
+        <div id="ctl-why"></div>
+      </div>
       <a id="diag-report" class="repbtn" href="#" target="_blank" rel="noopener"
          style="display:none">📄 Open full decision report</a>
     </div>
@@ -274,6 +300,21 @@
       </div>
       <div class="legendnote">Low-rate visual proof only. Preview frames are isolated
       from sensor telemetry and are never used by the arbiter.</div>
+    </div>
+
+    <!-- Live attitude. Separate from the decision panel on purpose: the
+         verdict is a snapshot of one moment, this is the vehicle's state
+         right now, and it must keep updating after the burn finishes. -->
+    <div class="panel">
+      <h2>Attitude — live body rate and thrust requirement</h2>
+      <div class="kv" style="display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:.84rem;">
+        <span class="k">body rate</span><span id="a-rate">—</span>
+        <span class="k">thruster</span><span id="a-burn">—</span>
+        <span class="k">burn still required</span><span id="a-need">—</span>
+        <span class="k">GPS altitude</span><span id="a-alt">off</span>
+      </div>
+      <div class="legendnote" id="a-note">Rate follows the sensor until a
+      validated burn is armed; after that the thruster governs it.</div>
     </div>
 
     <div class="panel">

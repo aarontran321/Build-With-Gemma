@@ -69,8 +69,20 @@ here on a Windows host:
 
 | model | verdict latency | diagnoses correct |
 |---|---|---|
-| `gemma4:e2b` | 20–30 s (needs `GEMMA_TIMEOUT_S=45`) | 2 of 3 — misreads `camera_dark` as `transient_disagreement` |
+| `gemma4:e2b` | 38–48 s under live load (needs `GEMMA_TIMEOUT_S=90`) | 2 of 3 — misreads `camera_dark` as `transient_disagreement` |
 | `gemma3:4b` | 55–66 s | 1 of 3 — not usable for this demo |
+
+Two things dominate that latency, and neither is obvious from the symptom
+(every decision quietly labelled `FALLBACK`):
+
+* **`num_predict` must clear the whole verdict.** Measured on `gemma4:e2b`
+  after the manoeuvre fields were added: **82 s at 700, 19 s at 1100** for
+  the same verdict. Schema-constrained decoding degrades sharply near the
+  token ceiling. Re-check this whenever `Verdict` grows.
+* **The narrator shares the model.** Ollama serialises per model, so a
+  report still being written puts the next arbitration behind it in the
+  queue — worth ~2x here. `NARRATOR_ENABLED=0` isolates the arbiter if
+  verdicts are timing out during a busy demo.
 
 If a run shows `FALLBACK` when Ollama is up, the timeout is too tight for the
 host, not a bug. Note the deterministic fallback classifies `camera_dark`
@@ -331,6 +343,117 @@ overwrites an earlier report.
 Each scenario has a committed golden run in `data/` reachable from the
 dashboard with no phone.
 
+## Attitude control — de-spin
+
+Naming the faulty sensor is only half a response. If the vehicle is
+tumbling, something still has to null the rate, and that means committing
+propellant on the strength of a rate estimate the system has just finished
+arguing about.
+
+The gyro has always sent a signed `{x, y, z}` vector; everything downstream
+used to reduce it to `|omega|` at ingest. The monitor now keeps the vector
+and derives the **dominant spin axis**, the **signed rate** (the sign is the
+direction of rotation, and therefore what a burn must oppose) and an **axis
+stability** score that separates a clean single-axis spin from a tumble.
+
+The proposer/disposer split is the same as for the diagnosis, one level
+down:
+
+| | proposes | computes | vetoes |
+|---|---|---|---|
+| Gemma | intent: de-spin / hold / partial, and about which axis | — | — |
+| `despin.py` | — | `L = I*omega`, burn time, thrust fraction | — |
+| `guardrail.py` | — | — | invariants C1–C5 |
+
+Gemma is **never asked for a burn duration or a thrust level**. Those follow
+from rigid-body mechanics, so a plausible-sounding wrong number can never
+reach a thruster. It supplies the judgement; arithmetic stays in code.
+
+### The asymmetry that makes this interesting
+
+Only the gyro yields a signed, axis-resolved rate. The camera proxy is a
+residual-**magnitude** estimate — it can say the vehicle is rotating and
+roughly how fast, but not about which axis or in which direction.
+
+So `switch_to_camera` is a perfectly good diagnosis that **forfeits attitude
+control authority**: you cannot null a vector you only know the length of.
+The guardrail enforces this as C1, and the dashboard shows the refusal
+rather than hiding it. Watch the two live scenarios diverge:
+
+* **camera dark** → gyro trusted → `+1.64 rad/s about z` → a **4.38 s burn
+  in the negative direction** is commanded and the sim flies it
+* **gyro saturation** → camera trusted → **burn refused**, attitude hold,
+  with the reason stated on screen
+
+A railed or flatlined gyro is refused for the same class of reason (C2): a
+limit is not a measurement. C3 refuses a tumble, C4 refuses anything inside
+the rate deadband, and C5 clamps a single burn to `DESPIN_MAX_BURN_S` — a
+long open-loop burn on a disputed rate estimate is exactly the irreversible
+action the guardrail exists to prevent.
+
+Refusing to fire is never overridden. If the arbiter chose to hold while a
+correction was in fact available, that is the conservative outcome and the
+guardrail leaves it alone — second-guessing it would put the guardrail back
+in the business of deciding.
+
+Constants (`SPACECRAFT_INERTIA_KG_M2`, `THRUSTER_MAX_TORQUE_NM`, the
+deadband, the burn cap) live in `config.py` and are demo-scale, not
+flight-accurate: the mechanism is the point.
+
+### The requirement is live, not a snapshot
+
+The burn still required is recomputed every frame from the current body
+rate, so the panel tracks reality instead of freezing on the figure that was
+correct at decision time:
+
+```
+rate=+1.63  burning=True   remaining=4.3s  still_needed=4.34s @100%  settled=False
+rate=+0.50  burning=True   remaining=1.3s  still_needed=1.34s @100%  settled=False
+rate=+0.25  burning=True   remaining=0.7s  still_needed=0.00s @  0%  settled=True
+De-spin complete — body rate +0.00 rad/s, spin nulled; no further thrust required
+```
+
+The vehicle rate is modelled as `measured + despin_offset`, where the offset
+is what the thrusters have removed. Holding the post-burn value instead would
+freeze the readout: spin the phone up again after a de-spin and the panel
+would keep insisting the rate was zero. The burn also cuts at zero crossing
+rather than reversing the spin.
+
+## GPS altitude — the optional third sensor (OFF by default)
+
+**The barometer is not reachable from a web page.** iOS exposes the
+barometric altimeter through native CoreMotion only; the Compass app reads it
+that way, a browser cannot. The only altitude available here is
+`navigator.geolocation` → `coords.altitude`: GPS-derived, roughly ±10–30 m,
+and frequently `null` indoors.
+
+Against a 3700 m descent that noise is not a rounding error — a 10 m jitter
+downward reads as terrain and would spuriously "land" the vehicle. So
+**altitude never drives the simulated descent altitude.** It is an
+observation, and when enabled it buys the arbiter one specific thing: a
+**time-to-ground budget**, which decides whether a manoeuvre is affordable.
+A burn that cannot finish before impact is worse than no burn — it spends
+propellant and leaves the vehicle part-corrected — so `despin.py` refuses it.
+
+The toggle is real, not cosmetic. `Hub._gate_altitude` strips the fields at
+the **ingest boundary**, so with altitude off there is no path by which it
+reaches the evidence, the arbiter, or a report. "Gemma ignores it" is a
+property of the data flow, not a promise in a prompt.
+
+| where | control |
+|---|---|
+| phone | **ENABLE ALTITUDE (GPS)** — its own permission, separate from the motion/camera tap |
+| dashboard | **Altitude input: ON/OFF** |
+| server | `ALTITUDE_ENABLED=1`, or `POST /api/altitude/{on\|off}` |
+
+Fixes coarser than `ALTITUDE_MAX_ACCURACY_M` (40 m) are discarded rather than
+reasoned over. An absent fix reads as **unknown**, never as ground level, and
+unknown is never treated as "no time" — with the toggle off the vehicle must
+not behave as though it were about to hit the ground. Both are tested.
+
+Off by default so a venue with no sky view degrades to exactly the demo that
+already works, rather than to a confusing one.
+
 ## Architecture
 
 ```
@@ -386,6 +509,8 @@ server/    monitor.py (detect + state machine)  arbiter.py (Gemma)
 phone/     index.html capture.js (gyro + pixels-only optical flow)
 dashboard/ index.html dashboard.js vendor/chart.umd.min.js (pinned, local)
 data/      three committed golden runs (jsonl)
+           despin.py (deterministic burn sizing; the model never supplies a
+                      thruster number)
 scripts/   make_golden.py  replay_check.py  virtual_phone.py (simulated node)
 tests/     pytest suites for schemas, monitor, guardrail, fallback, descent,
            mission log + reports, narrator, PDF export

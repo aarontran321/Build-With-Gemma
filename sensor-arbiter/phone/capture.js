@@ -53,6 +53,13 @@ const pctx = preview.getContext("2d");
 
 let ws = null, wsOpen = false, sent = 0;
 let previewWs = null, previewWsOpen = false, lastPreview = 0, previewEncoding = false;
+// GPS altitude. Deliberately a SEPARATE opt-in from the motion/camera tap:
+// it needs its own permission, it is the one sensor that can be absent for
+// environmental reasons (no sky view), and the demo must run identically
+// without it. NOT the barometer — iOS gives that to native CoreMotion only,
+// never to a web page — so expect +/-10-30 m and null indoors.
+let altWatchId = null;
+let altitudeM = null, altitudeAccM = null;
 let gyro = { x: 0, y: 0, z: 0 };      // rad/s (DeviceMotion gives deg/s)
 let gyroSeen = false;
 let flowMag = 0, flowConf = 0;
@@ -120,8 +127,62 @@ function sendSample() {
     // primary trigger is deterministic synthetic injection on the server.
     raw_saturated: mag > 30.0,
   };
+  // Omitted entirely when there is no usable fix — an absent altitude must
+  // never arrive as a zero, which would read as ground level.
+  if (altitudeM !== null) {
+    sample.altitude_m = r4(altitudeM);
+    sample.altitude_accuracy_m = altitudeAccM === null ? null : r4(altitudeAccM);
+  }
   ws.send(JSON.stringify(sample));
   $("v-sent").textContent = String(++sent);
+}
+
+/* ---------------------------- GPS altitude ---------------------------- */
+
+function startAltitude() {
+  if (!navigator.geolocation) {
+    $("alt-note").textContent = "This browser exposes no geolocation API.";
+    return;
+  }
+  $("alt-note").textContent = "Requesting location permission…";
+  altWatchId = navigator.geolocation.watchPosition(
+    (pos) => {
+      // altitude is null whenever the fix cannot supply one (common indoors);
+      // altitudeAccuracy is null when altitude is not measurable at all.
+      altitudeM = pos.coords.altitude;
+      altitudeAccM = pos.coords.altitudeAccuracy;
+      if (altitudeM === null) {
+        $("v-alt").textContent = "no fix";
+        $("alt-note").textContent =
+          "Located, but this fix carries no altitude — normal indoors. " +
+          "The demo runs unchanged without it.";
+        setDot("alt", false, "");
+      } else {
+        $("v-alt").textContent =
+          `${altitudeM.toFixed(0)} m ±${altitudeAccM === null ? "?" : altitudeAccM.toFixed(0)}`;
+        $("alt-note").textContent =
+          "GPS altitude (not the barometer — iOS keeps that native-only).";
+        setDot("alt", true, "");
+      }
+    },
+    (err) => {
+      altitudeM = altitudeAccM = null;
+      $("v-alt").textContent = "denied";
+      $("alt-note").textContent = `Location unavailable: ${err.message}`;
+      setDot("alt", false, "");
+    },
+    { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 });
+  $("alt-btn").textContent = "DISABLE ALTITUDE";
+}
+
+function stopAltitude() {
+  if (altWatchId !== null) navigator.geolocation.clearWatch(altWatchId);
+  altWatchId = null;
+  altitudeM = altitudeAccM = null;
+  $("v-alt").textContent = "off";
+  $("alt-note").textContent = "Altitude off — nothing is sent to the server.";
+  setDot("alt", false, "");
+  $("alt-btn").textContent = "ENABLE ALTITUDE (GPS)";
 }
 
 const r4 = (x) => Math.round(x * 10000) / 10000;
@@ -312,3 +373,5 @@ async function start() {
 }
 
 $("start").addEventListener("click", start);
+$("alt-btn").addEventListener("click",
+  () => (altWatchId === null ? startAltitude() : stopAltitude()));

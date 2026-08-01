@@ -23,6 +23,12 @@
     font-weight: 700; letter-spacing: .05em;
   }
   #start:active { background: #0c2f2b; }
+  /* secondary: altitude is optional, so it must not compete with the
+     primary ENABLE SENSORS tap */
+  #alt-btn { font-size: .82rem; padding: 9px 16px; border-radius: 10px;
+             border: 1px solid #2b3a52; background: #111827; color: #b9c7da;
+             font-weight: 600; letter-spacing: .04em; }
+  #alt-btn:active { background: #0d1421; }
   .card { width: 100%; max-width: 430px; background: #111827;
           border: 1px solid #1f2b3f; border-radius: 12px; padding: 12px 14px; }
   .row { display: flex; justify-content: space-between; align-items: baseline;
@@ -55,8 +61,17 @@
     <div class="row"><span class="k"><span id="d-imu" class="dot"></span>gyro (IMU, rad/s)</span><span class="v" id="v-imu">—</span></div>
     <div class="row"><span class="k"><span id="d-cam" class="dot"></span>camera rotation proxy</span><span class="v" id="v-cam">—</span></div>
     <div class="row"><span class="k">flow confidence</span><span class="v" id="v-conf">—</span></div>
+    <div class="row"><span class="k"><span id="d-alt" class="dot"></span>GPS altitude</span><span class="v" id="v-alt">off</span></div>
     <div class="row"><span class="k">samples sent</span><span class="v" id="v-sent">0</span></div>
   </div>
+
+  <!-- Altitude is a separate opt-in: its own permission, and the one sensor
+       that can be legitimately absent (no sky view). Off by default. -->
+  <button id="alt-btn">ENABLE ALTITUDE (GPS)</button>
+  <p class="hint" id="alt-note">Optional third sensor. GPS only — iOS does not
+  expose the barometric altimeter to web pages — so expect ±10–30 m and no fix
+  at all indoors. It never drives the simulated descent; it gives the arbiter a
+  time-to-ground budget when deciding whether a manoeuvre is affordable.</p>
 
   <canvas id="preview" width="160" height="120"></canvas>
   <p class="hint">Point the camera at a textured scene (desk, poster, keyboard) in

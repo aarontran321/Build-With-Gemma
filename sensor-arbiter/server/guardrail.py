@@ -18,6 +18,18 @@ Invariants enforced here:
   I6  downgrade an overconfident hard decision to CAUTION when the evidence
       carries no clear fault signature at all (fundamentally ambiguous)
 
+Attitude-control invariants (validate_control):
+  C1  never fire thrusters off a rate source with no signed axis — the
+      camera proxy is magnitude-only, so a camera-trusted verdict cannot
+      command a manoeuvre no matter how confident the model is
+  C2  never aim a burn with a railed or flatlined gyro (a limit is not a
+      measurement)
+  C3  never burn on an unstable axis estimate (a tumble has no single axis)
+  C4  never burn inside the rate deadband (propellant for nothing)
+  C5  burn magnitude is always the deterministic figure from despin.py,
+      never a number the model produced, and is clamped to the single-burn
+      limit
+
 (Malformed / out-of-schema model output is invariant I0, enforced upstream:
 arbiter.py rejects anything that fails Verdict validation before it can
 reach this module.)
@@ -25,8 +37,8 @@ reach this module.)
 
 from typing import Optional, Tuple
 
-from . import config
-from .schemas import Evidence, Verdict
+from . import config, despin
+from .schemas import ControlAction, Evidence, Verdict
 
 HARD_DECISIONS = {"switch_to_camera", "continue_with_gyro"}
 
@@ -110,3 +122,68 @@ def validate(verdict: Verdict, ev: Evidence) -> Tuple[Verdict, bool, Optional[st
 
     # Consistent with evidence and invariants: pass it through untouched.
     return verdict, False, None
+
+
+def validate_control(verdict: Verdict, ev: Evidence
+                     ) -> Tuple[ControlAction, bool, Optional[str]]:
+    """Turn the model's manoeuvre INTENT into the command that will execute.
+
+    Returns (action, overridden, reason). The magnitudes always come from
+    despin.py — the model is never the source of a burn number (C5) — so
+    "overridden" here means the model's *intent* was refused, not that a
+    figure was corrected.
+
+    Note the direction of the check: the guardrail can always veto a burn,
+    and can never invent one the physics does not support. If the model asked
+    to hold while a de-spin was in fact available, that is left alone: not
+    firing is the conservative outcome, and second-guessing it would put this
+    module back in the business of deciding, which is precisely what the
+    architecture forbids.
+    """
+    computed = despin.recommend(ev, verdict.trusted_sensor)
+    wants_burn = verdict.proposed_manoeuvre in ("despin", "reduce_rate_partial")
+
+    # C1-C4: the model wants to fire but the evidence cannot aim it.
+    if wants_burn and not computed.feasible:
+        reason = computed.rationale.replace("no de-spin commanded: ", "")
+        return computed, True, f"manoeuvre refused — {reason}"
+
+    if not wants_burn:
+        # Model chose to hold. Honour it, but keep the computed figures on the
+        # record so the report can show what was available and declined.
+        held = ControlAction(
+            manoeuvre="hold_attitude",
+            axis=ev.spin_axis,
+            fire_direction="none",
+            burn_s=0.0,
+            thrust_fraction=0.0,
+            measured_rate_rad_s=ev.spin_rate_signed,
+            rationale=("attitude hold: arbiter did not call for a correction"
+                       + (f" (a {computed.burn_s}s burn about {computed.axis} "
+                          f"was available)" if computed.feasible else
+                          f" — {computed.rationale}")),
+            feasible=computed.feasible,
+        )
+        return held, False, None
+
+    # Model wants a burn and the physics supports one. The axis is taken from
+    # the MEASUREMENT, not the model: if it named a different axis, that is a
+    # reasoning slip on a value it was handed, and firing about the wrong axis
+    # would add momentum rather than remove it.
+    if verdict.manoeuvre_axis != computed.axis:
+        r = (f"manoeuvre axis corrected {verdict.manoeuvre_axis} -> "
+             f"{computed.axis} (dominant measured spin axis)")
+        return computed, True, r
+
+    # A partial correction is a legitimate cautious choice: keep the model's
+    # restraint, but scale the deterministic burn rather than trusting a
+    # model-supplied fraction.
+    if verdict.proposed_manoeuvre == "reduce_rate_partial":
+        partial = computed.model_copy(update={
+            "manoeuvre": "reduce_rate_partial",
+            "burn_s": round(computed.burn_s * 0.5, 2),
+            "rationale": computed.rationale + " (partial: half-impulse by request)",
+        })
+        return partial, False, None
+
+    return computed, False, None

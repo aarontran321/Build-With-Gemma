@@ -64,6 +64,9 @@ class MonitorFrame:
     gyro_status: str
     state: str
     conflict_id: Optional[int]
+    spin_axis: str = "z"           # dominant body axis of rotation
+    spin_rate_signed: float = 0.0  # rad/s; sign is the direction of spin
+    spin_axis_stability: float = 0.0
     wake_evidence: Optional[Evidence] = None      # set on NORMAL->...->ACTIVE
     transitions: List[Transition] = field(default_factory=list)
 
@@ -77,6 +80,19 @@ class Monitor:
         self._gyro: deque = deque(maxlen=self._maxlen)
         self._flow: deque = deque(maxlen=self._maxlen)
         self._conf: deque = deque(maxlen=self._maxlen)
+        # SIGNED body-axis rates. |omega| alone says the vehicle is spinning
+        # but not about what, nor which way, so it can support a diagnosis but
+        # never an attitude correction: you cannot null a rate you only know
+        # the magnitude of. The phone has always sent the signed vector; this
+        # is where it stops being discarded.
+        self._gx: deque = deque(maxlen=self._maxlen)
+        self._gy: deque = deque(maxlen=self._maxlen)
+        self._gz: deque = deque(maxlen=self._maxlen)
+
+        # Latest usable altitude fix, or None. Optional third sensor, already
+        # gated at ingest, so None here simply means "unknown" — never zero.
+        self._alt_m: Optional[float] = None
+        self._alt_acc_m: Optional[float] = None
 
         # Adaptive flow->gyro scale, learned only while the streams agree and
         # both show motion, so the shape/trend comparison isn't hostage to a
@@ -109,6 +125,30 @@ class Monitor:
     # is long enough to be robust to single-sample glitches and short
     # enough that a pinned gyro scores ~1.0 by the time Gemma is woken.
     RECENT = 10  # samples at ~25 Hz
+
+    def _spin_axis(self):
+        """Resolve the spin into (axis, signed_rate, stability) over the window.
+
+        Returns the dominant body axis, its SIGNED mean rate in rad/s (the
+        sign is the direction of rotation, and therefore the direction a
+        de-spin burn must oppose), and a 0..1 stability score.
+
+        Stability is |mean| / mean|.| per axis: a steady spin about one axis
+        scores ~1.0, while a tumble whose sign keeps flipping averages toward
+        zero and scores low. A control action should not be commanded off an
+        unstable axis estimate, so this is evidence the arbiter needs, not a
+        cosmetic extra.
+        """
+        if len(self._gx) == 0:
+            return "z", 0.0, 0.0, {"x": 0.0, "y": 0.0, "z": 0.0}
+        arrs = {"x": np.asarray(self._gx), "y": np.asarray(self._gy),
+                "z": np.asarray(self._gz)}
+        means = {k: float(np.mean(v)) for k, v in arrs.items()}
+        axis = max(means, key=lambda k: abs(means[k]))
+        signed = means[axis]
+        abs_mean = float(np.mean(np.abs(arrs[axis])))
+        stability = float(abs(signed) / abs_mean) if abs_mean > 1e-9 else 0.0
+        return axis, signed, min(stability, 1.0), means
 
     def _rail_score(self, g: np.ndarray) -> float:
         """Fraction of recent samples pinned at the known rail magnitude."""
@@ -196,10 +236,13 @@ class Monitor:
         self._gyro.append(abs(s.gyro_mag))
         self._flow.append(abs(s.flow_mag))
         self._conf.append(s.flow_confidence)
+        self._gx.append(s.gyro.x); self._gy.append(s.gyro.y); self._gz.append(s.gyro.z)
+        self._alt_m, self._alt_acc_m = s.altitude_m, s.altitude_accuracy_m
 
         # trim to the evidence window by time (deque maxlen is just a bound)
         while len(self._t) > 4 and t - self._t[0] > config.EVIDENCE_WINDOW_S:
             self._t.popleft(); self._gyro.popleft(); self._flow.popleft(); self._conf.popleft()
+            self._gx.popleft(); self._gy.popleft(); self._gz.popleft()
 
         g = np.asarray(self._gyro)
         f = np.asarray(self._flow)
@@ -210,6 +253,7 @@ class Monitor:
         flow_quality = float(np.mean(np.asarray(self._conf)[-5:]))
         rail = self._rail_score(g)
         flat = self._flatline_score(g)
+        spin_axis, spin_signed, spin_stability, axis_means = self._spin_axis()
 
         gn = gyro_rate / config.GYRO_NORM_RAD_S
         fn = flow_rate / config.FLOW_NORM * self._flow_gain
@@ -258,6 +302,8 @@ class Monitor:
             gyro_flatline_score=flat, flow_quality=flow_quality,
             camera_status=camera_status, gyro_status=gyro_status,
             state=self.state.value, conflict_id=self.conflict_id or None,
+            spin_axis=spin_axis, spin_rate_signed=round(spin_signed, 4),
+            spin_axis_stability=round(spin_stability, 3),
         )
 
         # ----- state machine -----
@@ -281,7 +327,8 @@ class Monitor:
                     self.gemma_call_count += 1
                     frame.wake_evidence = self._build_evidence(
                         t, g, f, gyro_rate, flow_rate, flow_quality,
-                        rail, flat, gn, fn, div, camera_status, gyro_status)
+                        rail, flat, gn, fn, div, camera_status, gyro_status,
+                        spin_axis, spin_signed, spin_stability, axis_means)
 
         elif self.state == ConflictState.ACTIVE:
             # ESCALATION: if a decisive hardware signature appears that was
@@ -304,7 +351,8 @@ class Monitor:
                 frame.transitions.append(self._transition(t, ConflictState.ACTIVE))
                 frame.wake_evidence = self._build_evidence(
                     t, g, f, gyro_rate, flow_rate, flow_quality,
-                    rail, flat, gn, fn, div, camera_status, gyro_status)
+                    rail, flat, gn, fn, div, camera_status, gyro_status,
+                    spin_axis, spin_signed, spin_stability, axis_means)
             elif div < config.DIVERGENCE_RECOVERY:
                 self._recover_since = t
                 frame.transitions.append(self._transition(t, ConflictState.RECOVERING))
@@ -326,7 +374,9 @@ class Monitor:
     # ------------------------------------------------------------------
 
     def _build_evidence(self, t, g, f, gyro_rate, flow_rate, flow_quality,
-                        rail, flat, gn, fn, div, camera_status, gyro_status) -> Evidence:
+                        rail, flat, gn, fn, div, camera_status, gyro_status,
+                        spin_axis, spin_signed, spin_stability,
+                        axis_means) -> Evidence:
         """Compact evidence for the arbiter — trends, not one flag."""
         self._wake_snapshot = {"rail": rail, "quality": flow_quality}
         gyro_trend = self._trend(g, config.TREND_POINTS)
@@ -350,4 +400,16 @@ class Monitor:
             recent_agreement=list(self._agreement_hist),
             camera_status=camera_status,
             gyro_status=gyro_status,
+            spin_axis=spin_axis,
+            spin_rate_signed=round(spin_signed, 3),
+            spin_axis_stability=round(spin_stability, 2),
+            gyro_axis_rates={k: round(v, 3) for k, v in axis_means.items()},
+            altitude_m=self._alt_m,
+            altitude_accuracy_m=self._alt_acc_m,
+            # Time budget the altitude buys: how long there is to act before
+            # the ground arrives. None when altitude is unknown, which the
+            # arbiter must read as "no budget information", not "no time".
+            seconds_to_ground=(
+                round(self._alt_m / config.ALTITUDE_TIME_BUDGET_RATE_M_S, 1)
+                if self._alt_m is not None and self._alt_m > 0 else None),
         )

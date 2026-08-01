@@ -65,7 +65,12 @@ class Hub:
         # phase every frame, and the mission log must never carry frame-rate
         # traffic.
         self._descent_phase = {"guarded": "CHUTE"}
+        self._despin_logged = False
         self._stream_live = False
+        # Altitude is an OPTIONAL third sensor and defaults off; see
+        # _gate_altitude and config.ALTITUDE_ENABLED for why.
+        self.altitude_enabled = config.ALTITUDE_ENABLED
+        self.altitude_rejected = 0
         # Rate-limit state for NORMAL <-> CANDIDATE blips (see _log_transition).
         self._blip_window_start = -1e9
         self._blip_suppressed = 0
@@ -104,6 +109,7 @@ class Hub:
                 return  # replay owns the timeline; drop live samples
             s = self.injector.apply(s)
         self.last_t = s.t
+        self._gate_altitude(s)
 
         if not self._stream_live:
             self._stream_live = True
@@ -142,6 +148,7 @@ class Hub:
 
         desc = self.descent.step(s, frame)
         await self._log_descent_beats(desc, s.t)
+        await self._log_attitude_beats(desc, s.t)
         await self.broadcast({
             "type": "state",
             "mode": self.mode,
@@ -159,8 +166,33 @@ class Hub:
             "gyro_status": frame.gyro_status,
             "camera_status": frame.camera_status,
             "gyro_rail_score": round(frame.gyro_rail_score, 2),
+            "altitude_enabled": self.altitude_enabled,
+            "altitude_m": s.altitude_m,
+            "altitude_accuracy_m": s.altitude_accuracy_m,
             "descent": desc,
         })
+
+    def _gate_altitude(self, s: PhoneSample) -> None:
+        """Enforce the altitude toggle at the INGEST boundary.
+
+        Stripping the fields here, before the monitor sees the sample, is the
+        whole point of the toggle: with altitude off there is no downstream
+        path by which it could reach the evidence, the arbiter, the report or
+        the model. "Gemma ignores it" is a property of the data flow, not a
+        promise in a prompt.
+
+        A fix too coarse to mean anything at this scale is discarded on the
+        same grounds — a +/-60 m altitude cannot inform a decision about a
+        3700 m descent, and handing it over anyway would invite confident
+        nonsense.
+        """
+        if not self.altitude_enabled:
+            s.altitude_m = s.altitude_accuracy_m = None
+            return
+        acc = s.altitude_accuracy_m
+        if acc is not None and acc > config.ALTITUDE_MAX_ACCURACY_M:
+            self.altitude_rejected += 1
+            s.altitude_m = s.altitude_accuracy_m = None
 
     async def _log_transition(self, tr, frame) -> None:
         """State-machine transitions, with the severity a reader expects:
@@ -216,6 +248,34 @@ class Hub:
             f"threshold — no conflict armed)",
             severity="info", stream_t=t, detail={"suppressed_blips": n})
 
+    async def _log_attitude_beats(self, desc: dict, t: float) -> None:
+        """Log the moment a burn finishes and the vehicle is back under
+        control. Commanding a de-spin is only half the story: the point of
+        the manoeuvre is that the rate afterwards is zero, so that has to be
+        an event in its own right rather than something the operator has to
+        infer from a number that stopped changing.
+
+        Change-triggered, like the descent beats — never per frame."""
+        at = desc.get("attitude")
+        if at is None:
+            return
+        done = at["despin_done"]
+        if done == self._despin_logged:
+            return
+        self._despin_logged = done
+        if not done:
+            return
+        settled = at["settled"]
+        await self.note(
+            "control",
+            (f"De-spin complete — body rate {at['body_rate']:+.2f} rad/s"
+             + (", spin nulled; no further thrust required" if settled else
+                f", still outside the {config.DESPIN_DEADBAND_RAD_S} rad/s "
+                f"deadband: a follow-up burn of {at['residual_burn_s']}s is "
+                f"still required")),
+            severity="success" if settled else "warn",
+            stream_t=t, detail=dict(at))
+
     async def _log_descent_beats(self, desc: dict, t: float) -> None:
         """Log only when the vehicle changes phase — touchdown or impact.
         These are the beats the report's narrative is built from."""
@@ -237,10 +297,18 @@ class Hub:
     async def _arbitrate(self, ev: Evidence) -> None:
         verdict, source, latency, note = await arbiter.arbitrate(ev)
         final_verdict, overrode, reason = guardrail.validate(verdict, ev)
+        # Sizing the manoeuvre uses the FINAL verdict, not the proposed one:
+        # if the guardrail moved trust to another sensor, the burn must be
+        # judged against the sensor actually being flown.
+        action, ctl_overrode, ctl_reason = guardrail.validate_control(
+            final_verdict, ev)
         fd = FinalDecision(
             conflict_id=ev.conflict_id,
             verdict=final_verdict,
             source="guardrail_override" if overrode else source,
+            control_action=action,
+            control_overridden=ctl_overrode,
+            control_override_reason=ctl_reason,
             guardrail_overrode=overrode,
             override_reason=reason,
             arbitration_latency_s=round(latency, 3),
@@ -281,6 +349,30 @@ class Hub:
             detail={"confidence": final_verdict.confidence,
                     "faulty_sensor": final_verdict.faulty_sensor,
                     "source": fd.source})
+
+        # Committing propellant is its own flight action, logged separately
+        # from the diagnosis that motivated it — including the refusals, which
+        # are the more interesting half.
+        if ctl_overrode:
+            await self.note(
+                "control", f"MANOEUVRE REFUSED — {ctl_reason}",
+                severity="critical", conflict_id=ev.conflict_id,
+                detail={"model_proposed": final_verdict.proposed_manoeuvre,
+                        "model_axis": final_verdict.manoeuvre_axis,
+                        "executed": action.manoeuvre})
+        elif action.manoeuvre == "hold_attitude":
+            await self.note(
+                "control", f"Attitude hold — {action.rationale}",
+                severity="info", conflict_id=ev.conflict_id,
+                detail=action.model_dump())
+        else:
+            await self.note(
+                "control",
+                f"DE-SPIN commanded: {action.burn_s}s {action.fire_direction} "
+                f"about {action.axis} at {int(action.thrust_fraction * 100)}% "
+                f"torque (measured {action.measured_rate_rad_s:+.2f} rad/s)",
+                severity="warn", conflict_id=ev.conflict_id,
+                detail=action.model_dump())
 
         await self.broadcast({"type": "decision", **fd.model_dump(),
                               "note": note,
@@ -350,6 +442,7 @@ class Hub:
         self.last_decision = None
         self.last_evidence = None
         self._descent_phase = {"guarded": "CHUTE"}
+        self._despin_logged = False
         self._stream_live = False
         self._blip_window_start = -1e9
         self._blip_suppressed = 0
@@ -446,6 +539,8 @@ async def status():
         "gemma_model": config.GEMMA_MODEL,
         "force_fallback": config.ARBITER_FORCE_FALLBACK,
         "bad_samples": hub.bad_samples,
+        "altitude_enabled": hub.altitude_enabled,
+        "altitude_rejected": hub.altitude_rejected,
         "dashboards": len(hub.dashboards),
         "session_log": hub.recorder.path,
         "scenarios": list(SCENARIOS),
@@ -529,6 +624,29 @@ async def report_json(report_id: str):
     return report
 
 
+@app.post("/api/altitude/{state}")
+async def altitude_toggle(state: str):
+    """Turn the optional altitude input on or off at runtime.
+
+    Off is not cosmetic: _gate_altitude strips the fields at ingest, so with
+    altitude off there is no path by which it can reach the evidence, the
+    arbiter or a report. Toggling it is therefore a demonstrable claim, not
+    a display preference.
+    """
+    if state not in ("on", "off"):
+        return JSONResponse({"error": "state must be 'on' or 'off'"}, 400)
+    hub.altitude_enabled = state == "on"
+    await hub.note(
+        "sensor",
+        f"GPS altitude input {'ENABLED' if hub.altitude_enabled else 'DISABLED'}"
+        + ("" if hub.altitude_enabled else
+           " — stripped at ingest; the arbiter cannot see it"),
+        severity="warn")
+    await hub.broadcast({"type": "altitude_mode",
+                         "enabled": hub.altitude_enabled})
+    return {"ok": True, "altitude_enabled": hub.altitude_enabled}
+
+
 @app.post("/api/inject/{scenario}")
 async def inject(scenario: str):
     if scenario not in SCENARIOS:
@@ -590,6 +708,7 @@ async def ws_dashboard(ws: WebSocket):
     hello = {"type": "hello", "mode": hub.mode, "model": config.GEMMA_MODEL,
              "scenarios": list(SCENARIOS), "golden_runs": list(GOLDEN_RUNS),
              "state": hub.monitor.state.value,
+             "altitude_enabled": hub.altitude_enabled,
              "session_id": hub.log.session_id,
              # backfill so a dashboard opened mid-demo still shows the history
              "log": hub.log.recent(limit=config.MISSION_LOG_REPLAY_ON_CONNECT),

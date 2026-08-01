@@ -114,10 +114,72 @@ function refreshCharts(latestX) {
 let lastInjected = null;
 let currentMode = "live";
 let conflictHasVerdict = false;   // a verdict is latched on the diagnosis panel
+let altitudeEnabled = false;      // optional third sensor; server is the source of truth
+
+/* Live attitude, updated every frame. The decision panel above shows what was
+ * commanded at one instant; this shows where the vehicle actually IS, so once
+ * a burn nulls the spin it reads "no thrust required" instead of leaving the
+ * decision-time figure standing as though the manoeuvre never happened. */
+function renderAttitude(at) {
+  if (!at) return;
+  const r = at.body_rate;
+  $("a-rate").textContent = `${r >= 0 ? "+" : ""}${r.toFixed(2)} rad/s`;
+  $("a-rate").style.color = at.settled ? "#34d399" : "#fbbf24";
+
+  if (at.burning) {
+    $("a-burn").textContent = `FIRING — ${at.burn_remaining_s}s remaining`;
+    $("a-burn").style.color = "#fbbf24";
+  } else {
+    $("a-burn").textContent = at.despin_done ? "idle (burn complete)" : "idle";
+    $("a-burn").style.color = "";
+  }
+
+  if (at.settled) {
+    $("a-need").textContent = "none — spin nulled, 0% torque";
+    $("a-need").style.color = "#34d399";
+    $("a-note").textContent = at.despin_done
+      ? "De-spin complete: rate is inside the deadband and no further thrust is required."
+      : "Rate is inside the deadband; no correction is worth the propellant.";
+  } else {
+    $("a-need").textContent =
+      `${at.residual_burn_s}s at ${Math.round(at.residual_thrust_fraction * 100)}% torque`;
+    $("a-need").style.color = "#fbbf24";
+    $("a-note").textContent =
+      "Requirement is recomputed every frame from the current rate (L = I·ω).";
+  }
+}
+
+/* Altitude is optional and OFF by default. When off the server strips it at
+ * ingest, so "the arbiter cannot see it" is a fact about the data path — the
+ * readout says which of the three states we are in rather than just blanking. */
+function setAltitudeMode(enabled) {
+  altitudeEnabled = enabled;
+  $("b-alt").textContent = `Altitude input: ${enabled ? "ON" : "OFF"}`;
+  $("b-alt").style.borderColor = enabled ? "#5eead4" : "";
+  $("b-alt").style.color = enabled ? "#5eead4" : "";
+}
+
+function renderAltitude(m) {
+  const el = $("a-alt");
+  if (!m.altitude_enabled) {
+    el.textContent = "off — not sent to the arbiter";
+    el.style.color = "#64748b";
+  } else if (m.altitude_m === null || m.altitude_m === undefined) {
+    el.textContent = "on, no usable fix (normal indoors)";
+    el.style.color = "#fbbf24";
+  } else {
+    const acc = m.altitude_accuracy_m;
+    el.textContent = `${m.altitude_m.toFixed(0)} m` +
+      (acc === null || acc === undefined ? "" : ` ±${acc.toFixed(0)} m`);
+    el.style.color = "#5eead4";
+  }
+}
 
 function onState(m) {
   currentMode = m.mode;
   setPreviewMode(m.mode);
+  renderAttitude(m.descent && m.descent.attitude);
+  renderAltitude(m);
   if (t0 === null) t0 = m.t;
   const x = m.t - t0;
   push(buf.gyro, x, m.gyro_mag);
@@ -208,9 +270,47 @@ function addEv(text) {
   $("evd").appendChild(li);
 }
 
+/* Attitude control: what the vehicle DOES about the spin, shown as proposed
+ * beside executed. A refusal is the most informative outcome here — trusting
+ * the camera is a valid diagnosis that still cannot aim a burn, because the
+ * flow proxy is magnitude-only — so refusals are rendered, not hidden. */
+function renderControl(m) {
+  const a = m.control_action;
+  const v = m.verdict;
+  if (!a) { $("control").style.display = "none"; return; }
+  $("control").style.display = "block";
+
+  const axis = (v.manoeuvre_axis || a.axis).toUpperCase();
+  $("ctl-proposed").textContent =
+    `${(v.proposed_manoeuvre || "hold_attitude").replace(/_/g, " ")} · axis ${axis}`;
+
+  const exec = $("ctl-executed");
+  if (a.manoeuvre === "hold_attitude" || a.burn_s === 0) {
+    exec.textContent = "attitude hold — no burn";
+    exec.className = "hold";
+  } else {
+    exec.textContent =
+      `${a.manoeuvre.replace(/_/g, " ")} · ${a.burn_s}s ${a.fire_direction} ` +
+      `about ${a.axis.toUpperCase()} · ${Math.round(a.thrust_fraction * 100)}% torque`;
+    exec.className = "fire";
+  }
+
+  const r = a.measured_rate_rad_s;
+  $("ctl-rate").textContent =
+    `${r >= 0 ? "+" : ""}${r.toFixed(2)} rad/s about ${a.axis.toUpperCase()}` +
+    (r !== 0 ? ` (${r > 0 ? "positive" : "negative"} sense)` : "");
+
+  const why = $("ctl-why");
+  why.className = m.control_overridden ? "refused" : "";
+  why.textContent = m.control_overridden
+    ? `GUARDRAIL: ${m.control_override_reason}`
+    : a.rationale;
+}
+
 function onDecision(m) {
   $("thinking").style.display = "none";
   conflictHasVerdict = true;      // latched: a later return to NORMAL clears it
+  renderControl(m);
   const v = m.verdict;
   $("fault").textContent = v.fault_class.replace(/_/g, " ").toUpperCase();
   $("faulty").textContent = v.faulty_sensor;
@@ -259,6 +359,7 @@ function resetView() {
   conflictHasVerdict = false;
   $("diag").classList.remove("resolved");
   $("resolved-note").style.display = "none";
+  $("control").style.display = "none";
   // The log deliberately survives a reset: what happened before it is still
   // part of the session record, and the server keeps those reports too.
   refreshReports();
@@ -462,6 +563,12 @@ function connect() {
         refreshReports();
         if (m.source === "gemma") banner(`✍ Gemma wrote the report summary: “${m.headline}”`, 8000);
         break;
+      case "altitude_mode":
+        setAltitudeMode(m.enabled);
+        banner(m.enabled
+          ? "GPS altitude ENABLED — it now reaches the arbiter as evidence"
+          : "GPS altitude DISABLED — stripped at ingest; the arbiter cannot see it", 5000);
+        break;
       case "inject": banner(`Synthetic fault injected: ${m.scenario}`, 4000); break;
       case "reset": resetView(); banner("Session reset", 2500); break;
       case "replay":
@@ -478,6 +585,7 @@ function connect() {
           }
         // a dashboard (re)connecting mid-session still shows the verdict,
         // the log history and the reports already generated
+        setAltitudeMode(!!m.altitude_enabled);
         for (const e of m.log || []) addLogRow(e);
         if (m.reports) { renderReports(m.reports); refreshReports(); }
         if (m.last_decision) {
@@ -531,6 +639,7 @@ $("b-gyro").onclick = () => post("/api/inject/gyro_saturation");
 $("b-cam").onclick = () => post("/api/inject/camera_dark");
 $("b-trans").onclick = () => post("/api/inject/transient");
 $("b-reset").onclick = () => post("/api/reset");
+$("b-alt").onclick = () => post("/api/altitude/" + (altitudeEnabled ? "off" : "on"));
 $("b-replay").onclick = () => post("/api/replay/" + $("replaysel").value);
 
 $("b-report").onclick = () =>

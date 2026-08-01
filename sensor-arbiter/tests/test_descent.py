@@ -112,7 +112,14 @@ def test_caution_decision_slows_descent():
     assert sim.guarded.alt > config.DESCENT_START_ALT_M - 20.0 * config.DESCENT_NOMINAL_RATE_M_S
 
 
-def test_snapshot_has_only_guarded():
+def test_snapshot_has_no_naive_path():
+    """The NAIVE vehicle is gone and must not come back by accident.
+
+    (Originally asserted the snapshot held *only* "guarded"; it now also
+    carries "attitude" for the de-spin state. The point of the test is the
+    absence of a naive path, so that is what it checks.)
+    """
     sim = DualDescent()
     snap = sim.step(sample(0.0), frame(0.0))
-    assert set(snap.keys()) == {"guarded"}
+    assert "naive" not in snap
+    assert "guarded" in snap

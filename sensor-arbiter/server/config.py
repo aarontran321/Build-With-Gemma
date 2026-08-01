@@ -25,7 +25,13 @@ OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
 # never stalls (P0 reliability beats P1 model quality).
 GEMMA_TIMEOUT_S = float(os.environ.get("GEMMA_TIMEOUT_S", "15.0"))
 GEMMA_RETRIES = 1  # one stricter retry on malformed output, then fallback
-GEMMA_OPTIONS = {"temperature": 0.1, "num_predict": 700}
+# num_predict must comfortably clear the FULL verdict. Measured on gemma4:e2b
+# after the manoeuvre fields were added to the schema: at 700 a verdict took
+# 82s, at 1100 the same verdict took 19s. Schema-constrained decoding degrades
+# sharply as it approaches the token ceiling, so an undersized budget reads as
+# "the model is slow" and silently pushes every decision onto the fallback.
+# Re-check this whenever the Verdict schema grows.
+GEMMA_OPTIONS = {"temperature": 0.1, "num_predict": 1100}
 # Fire a tiny request at startup so the (large) model is resident in memory
 # before the first real conflict; otherwise first-call load time would eat
 # the timeout.
@@ -42,6 +48,13 @@ ARBITER_FORCE_FALLBACK = os.environ.get("ARBITER_FORCE_FALLBACK", "0") == "1"
 # allowed to write freely where the arbiter is not.
 # It runs AFTER the decision has been broadcast, never in the decision path,
 # so a slow narration can never delay a flight decision or the telemetry.
+# CONTENTION WARNING: the narrator uses the SAME Ollama model as the arbiter,
+# and Ollama serialises requests per model. A narration still running when the
+# next conflict arms puts that arbitration behind it in the queue. Measured on
+# gemma4:e2b during a replay: ~38-48s per verdict with the narrator on, and
+# timeouts at 45s; the same verdict took ~19s with no other load. If verdicts
+# are landing as FALLBACK during a busy demo, set NARRATOR_ENABLED=0 before
+# blaming the arbiter, or run a model fast enough to absorb both.
 NARRATOR_ENABLED = os.environ.get("NARRATOR_ENABLED", "1") == "1"
 # Prose is far longer than a verdict, and this is background work with a
 # deterministic text already on screen — so the budget is generous where the
@@ -141,3 +154,55 @@ DESCENT_SAFE_IMPACT_M_S = 15.0     # touchdown at/below this counts SAFE
 DESCENT_CAUTION_RATE_M_S = 30.0    # rate while in trust-neither CAUTION mode
 GUARDED_RECONVERGE_TAU_S = 3.0     # hold-drift error decays with this tau
 GUARDED_HOLD_DRIFT_M_S = 5.0       # small drift during conservative hold
+
+# ---------------------------------------------------------------------------
+# Attitude control / de-spin (demo-scale, SIMULATED)
+# ---------------------------------------------------------------------------
+# Nulling a spin is the reason the vehicle needs a trustworthy RATE at all:
+# a fault verdict that only picks a sensor stops short of the actual job.
+# Sizing a burn is deterministic physics, so it is computed in code
+# (server/despin.py) and used to bound whatever the model proposes.
+#
+#   angular impulse required   L = I * omega        [kg m^2 / s]
+#   burn time at full torque   t = I * omega / tau
+#
+# Numbers are demo-scale, not flight-accurate: the mechanism is the point.
+SPACECRAFT_INERTIA_KG_M2 = 120.0   # about the controlled axis
+THRUSTER_MAX_TORQUE_NM = 45.0      # full authority of the RCS pair
+# Rates below this are not worth spending propellant on.
+DESPIN_DEADBAND_RAD_S = 0.25
+# Never command a burn longer than this in one go — a long open-loop burn on a
+# possibly-wrong rate estimate is exactly the irreversible action the guardrail
+# exists to prevent. Longer corrections happen over repeated arbitrations.
+DESPIN_MAX_BURN_S = 8.0
+# An axis estimate this unstable is a tumble, not a spin: the dominant-axis
+# mean is meaningless and no burn may be commanded from it.
+DESPIN_MIN_AXIS_STABILITY = 0.6
+
+# ---------------------------------------------------------------------------
+# GPS altitude (optional third sensor, OFF by default)
+# ---------------------------------------------------------------------------
+# WHY THIS IS A TOGGLE, AND WHY IT DEFAULTS OFF.
+#
+# The phone's barometric altimeter is NOT reachable from a web page — iOS
+# exposes it through native CoreMotion only — so the only altitude available
+# here is GPS, via navigator.geolocation. That is +/-10-30 m at best and
+# frequently null indoors.
+#
+# Against a 3700 m descent profile that noise is not a rounding error: a 10 m
+# jitter downward reads as terrain and would spuriously "land" the vehicle.
+# So altitude NEVER drives the simulated descent altitude. It is an
+# OBSERVATION: shown live, and — only when this toggle is on and the fix is
+# good enough — added to the evidence Gemma reasons over, where it supplies
+# the time-to-ground budget that decides whether a de-spin is affordable.
+#
+# Off by default so a venue with no sky view degrades to exactly the demo
+# that already works, rather than to a confusing one.
+ALTITUDE_ENABLED = os.environ.get("ALTITUDE_ENABLED", "0") == "1"
+# Fixes worse than this are discarded rather than reasoned over: a 60 m
+# uncertainty cannot inform a decision at this scale, and feeding it to the
+# model would invite confident nonsense.
+ALTITUDE_MAX_ACCURACY_M = float(os.environ.get("ALTITUDE_MAX_ACCURACY_M", "40.0"))
+# Descent rate assumed when converting altitude into a time budget. The demo
+# vehicle's nominal rate; real telemetry would supply this.
+ALTITUDE_TIME_BUDGET_RATE_M_S = DESCENT_NOMINAL_RATE_M_S
