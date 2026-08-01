@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sensor Arbiter — Mission Dashboard</title>
+<!-- OFFLINE RULE: no CDN, no external URL of any kind. Chart.js is a pinned
+     local copy in vendor/; fonts are system fonts; icons are text. -->
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+         "Helvetica Neue", sans-serif; background: #0b0f1a; color: #dfe7f3;
+         padding: 14px 18px 28px; }
+  h1 { font-size: 1rem; letter-spacing: .14em; color: #9fb4d0; }
+  h1 b { color: #5eead4; }
+  .muted { color: #64748b; font-size: .78rem; }
+
+  header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+           margin-bottom: 10px; }
+  .badge { padding: 3px 10px; border-radius: 999px; font-size: .72rem;
+           font-weight: 700; letter-spacing: .08em; border: 1px solid; }
+  #mode.live   { color: #34d399; border-color: #34d399; }
+  #mode.replay { color: #fbbf24; border-color: #fbbf24;
+                 animation: pulse 1.6s infinite; }
+  #fsm.NORMAL     { color: #34d399; border-color: #34d399; }
+  #fsm.CANDIDATE  { color: #fbbf24; border-color: #fbbf24; }
+  #fsm.ACTIVE     { color: #f87171; border-color: #f87171;
+                    animation: pulse .9s infinite; }
+  #fsm.RECOVERING { color: #60a5fa; border-color: #60a5fa; }
+  @keyframes pulse { 50% { opacity: .45; } }
+  #conn { margin-left: auto; }
+
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+              margin-bottom: 12px; }
+  button, select {
+    background: #111827; color: #dfe7f3; border: 1px solid #2b3a52;
+    border-radius: 8px; padding: 8px 13px; font-size: .82rem; font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { border-color: #5eead4; }
+  button.danger { border-color: #7f1d1d; color: #fca5a5; }
+  button.danger:hover { border-color: #f87171; }
+  .sep { width: 1px; height: 22px; background: #2b3a52; margin: 0 4px; }
+
+  .grid { display: grid; grid-template-columns: 1.35fr 1fr; gap: 12px; }
+  @media (max-width: 1000px) { .grid { grid-template-columns: 1fr; } }
+  .panel { background: #111827; border: 1px solid #1f2b3f; border-radius: 12px;
+           padding: 12px 14px; }
+  .panel h2 { font-size: .72rem; letter-spacing: .12em; text-transform: uppercase;
+              color: #8fa3bd; margin-bottom: 8px; }
+  .chartbox { position: relative; height: 170px; }
+  .chartbox.tall { height: 230px; }
+
+  /* diagnosis panel */
+  #diag .fault { font-size: 1.25rem; font-weight: 800; letter-spacing: .03em; }
+  #diag .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px;
+              margin: 8px 0; font-size: .84rem; }
+  #diag .kv .k { color: #8fa3bd; }
+  #confbar { height: 8px; background: #1f2b3f; border-radius: 4px; overflow: hidden; }
+  #confbar > div { height: 100%; background: #5eead4; width: 0%; }
+  ul#evd { margin: 6px 0 0 18px; font-size: .82rem; color: #b9c7da; }
+  #alt-hyp { font-size: .78rem; color: #8fa3bd; margin-top: 6px; font-style: italic; }
+  .srcbadge { display: inline-block; padding: 2px 10px; border-radius: 999px;
+              font-size: .72rem; font-weight: 800; letter-spacing: .06em; }
+  .src-gemma { background: #103b36; color: #5eead4; border: 1px solid #2dd4bf; }
+  .src-fallback { background: #3a2b0d; color: #fbbf24; border: 1px solid #fbbf24; }
+  .src-guardrail_override { background: #3b1113; color: #fca5a5; border: 1px solid #f87171; }
+  #override { display: none; margin-top: 8px; padding: 8px 10px; border-radius: 8px;
+              background: #3b1113; border: 1px solid #7f1d1d; font-size: .8rem; }
+  #thinking { display: none; color: #fbbf24; font-size: .85rem;
+              animation: pulse 1s infinite; margin-bottom: 6px; }
+  #decision-chip { font-size: .95rem; font-weight: 800; color: #e2e8f0; }
+
+  /* descent outcomes */
+  .outcomes { display: flex; gap: 10px; margin-top: 8px; }
+  .outcome { flex: 1; text-align: center; border-radius: 10px; padding: 8px 6px;
+             border: 1px solid #2b3a52; }
+  .outcome .who { font-size: .68rem; letter-spacing: .1em; color: #8fa3bd; }
+  .outcome .what { font-size: 1.3rem; font-weight: 900; }
+  .outcome.safe  { border-color: #34d399; } .outcome.safe .what { color: #34d399; }
+  .outcome.crash { border-color: #f87171; background: #200a0c; }
+  .outcome.crash .what { color: #f87171; }
+  .disclaimer { margin-top: 8px; font-size: .72rem; color: #7c8aa0;
+                border-top: 1px dashed #2b3a52; padding-top: 7px; }
+
+  .legendnote { font-size: .72rem; color: #7c8aa0; margin-top: 4px; }
+  #banner { display: none; margin-bottom: 10px; padding: 8px 12px;
+            border-radius: 8px; background: #172554; border: 1px solid #3b82f6;
+            font-size: .82rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>SENSOR ARBITER <b>// deep-space descent fault arbitration</b></h1>
+  <span id="mode" class="badge live">LIVE</span>
+  <span id="fsm" class="badge NORMAL">NORMAL</span>
+  <span class="muted" id="model">model: —</span>
+  <span class="muted" id="conn">dashboard link: connecting…</span>
+</header>
+
+<div id="banner"></div>
+
+<div class="controls">
+  <span class="muted">INJECT SYNTHETIC FAULT →</span>
+  <button id="b-gyro">⚡ Gyro saturation</button>
+  <button id="b-cam">🕶 Camera dark</button>
+  <button id="b-trans">〰 Transient blip</button>
+  <span class="sep"></span>
+  <select id="replaysel"></select>
+  <button id="b-replay">▶ Replay golden run</button>
+  <span class="sep"></span>
+  <button id="b-reset" class="danger">Reset</button>
+</div>
+
+<div class="grid">
+  <div style="display:flex; flex-direction:column; gap:12px;">
+    <div class="panel">
+      <h2>IMU gyro |ω| — rad/s · real phone input (synthetic fault overwrites this stream when injected)</h2>
+      <div class="chartbox"><canvas id="c-gyro"></canvas></div>
+    </div>
+    <div class="panel">
+      <h2>Camera rotational-motion proxy — uncalibrated, pixels only · with flow confidence</h2>
+      <div class="chartbox"><canvas id="c-flow"></canvas></div>
+      <div class="legendnote">The camera proxy shares no hardware or data path with the
+      gyro. Compared by shape and trend, never unit-for-unit.</div>
+    </div>
+    <div class="panel">
+      <h2>Simulated descent consequence — NAIVE (trusts corrupted stream) vs GUARDED (arbitrated)</h2>
+      <div class="chartbox tall"><canvas id="c-alt"></canvas></div>
+      <div class="outcomes">
+        <div class="outcome" id="o-naive">
+          <div class="who">NAIVE FILTER</div><div class="what">DESCENDING</div>
+          <div class="muted" id="o-naive-d">—</div>
+        </div>
+        <div class="outcome" id="o-guarded">
+          <div class="who">GUARDED (ARBITER + GUARDRAIL)</div><div class="what">DESCENDING</div>
+          <div class="muted" id="o-guarded-d">—</div>
+        </div>
+      </div>
+      <div class="disclaimer">Accelerated simulated descent consequence driven by real
+      or replayed sensor data. The phone is not physically descending, and this is
+      not a flight-accurate Schiaparelli simulator.</div>
+    </div>
+  </div>
+
+  <div style="display:flex; flex-direction:column; gap:12px;">
+    <div class="panel" id="diag">
+      <h2>Gemma fault arbitration</h2>
+      <div id="thinking">⏳ conflict detected — Gemma arbiter woken, diagnosing…</div>
+      <div class="fault" id="fault">— no conflict —</div>
+      <div class="kv">
+        <span class="k">faulty sensor</span><span id="faulty">—</span>
+        <span class="k">trusted sensor</span><span id="trusted">—</span>
+        <span class="k">decision</span><span id="decision-chip">—</span>
+        <span class="k">decision source</span><span id="src">—</span>
+        <span class="k">arbitration latency</span><span id="lat">—</span>
+        <span class="k">confidence</span><span id="confv">—</span>
+      </div>
+      <div id="confbar"><div></div></div>
+      <ul id="evd"></ul>
+      <div id="alt-hyp"></div>
+      <div id="override"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Monitor telemetry (classical, deterministic — detection only)</h2>
+      <div class="kv" style="display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:.84rem;">
+        <span class="muted">conflict state</span><span id="t-state">NORMAL</span>
+        <span class="muted">conflict id</span><span id="t-cid">—</span>
+        <span class="muted">normalized divergence</span><span id="t-div">0.00</span>
+        <span class="muted">gyro status</span><span id="t-gstat">—</span>
+        <span class="muted">camera status</span><span id="t-cstat">—</span>
+        <span class="muted">gyro rail score</span><span id="t-rail">0.00</span>
+        <span class="muted">fault injection</span><span id="t-inj">none</span>
+      </div>
+      <div class="legendnote">Gemma is woken exactly once per conflict, on the
+      CANDIDATE→ACTIVE transition. All frame-rate math is deterministic code.</div>
+    </div>
+  </div>
+</div>
+
+<script src="vendor/chart.umd.min.js"></script>
+<script src="dashboard.js"></script>
+</body>
+</html>

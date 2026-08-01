@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Sensor Arbiter — Phone Sensor Node</title>
+<style>
+  /* No external assets anywhere: system fonts, inline CSS only. */
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0b0f1a; color: #dfe7f3; min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 16px; gap: 14px;
+  }
+  h1 { font-size: 1.05rem; letter-spacing: .12em; text-transform: uppercase;
+       color: #9fb4d0; }
+  h1 b { color: #5eead4; }
+  #start {
+    font-size: 1.1rem; padding: 16px 30px; border-radius: 12px;
+    border: 1px solid #2dd4bf; background: #103b36; color: #5eead4;
+    font-weight: 700; letter-spacing: .05em;
+  }
+  #start:active { background: #0c2f2b; }
+  .card { width: 100%; max-width: 430px; background: #111827;
+          border: 1px solid #1f2b3f; border-radius: 12px; padding: 12px 14px; }
+  .row { display: flex; justify-content: space-between; align-items: baseline;
+         padding: 4px 0; font-variant-numeric: tabular-nums; }
+  .row .k { color: #8fa3bd; font-size: .82rem; }
+  .row .v { font-weight: 600; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+         background: #64748b; margin-right: 7px; vertical-align: baseline; }
+  .dot.ok  { background: #34d399; }
+  .dot.bad { background: #f87171; }
+  canvas#preview { width: 100%; max-width: 430px; border-radius: 12px;
+                   border: 1px solid #1f2b3f; background: #000; }
+  #err { color: #fca5a5; font-size: .85rem; max-width: 430px; text-align: center;
+         white-space: pre-wrap; }
+  .hint { color: #64748b; font-size: .78rem; max-width: 430px; text-align: center;
+          line-height: 1.4; }
+  video { display: none; }
+</style>
+</head>
+<body>
+  <h1>SENSOR NODE <b>// spacecraft stand-in</b></h1>
+
+  <!-- iOS Safari: DeviceMotionEvent.requestPermission and getUserMedia both
+       require HTTPS and a user gesture, so everything starts from this tap. -->
+  <button id="start">ENABLE SENSORS</button>
+  <div id="err"></div>
+
+  <div class="card">
+    <div class="row"><span class="k"><span id="d-ws" class="dot"></span>uplink (WSS)</span><span class="v" id="v-ws">—</span></div>
+    <div class="row"><span class="k"><span id="d-imu" class="dot"></span>gyro (IMU, rad/s)</span><span class="v" id="v-imu">—</span></div>
+    <div class="row"><span class="k"><span id="d-cam" class="dot"></span>camera rotation proxy</span><span class="v" id="v-cam">—</span></div>
+    <div class="row"><span class="k">flow confidence</span><span class="v" id="v-conf">—</span></div>
+    <div class="row"><span class="k">samples sent</span><span class="v" id="v-sent">0</span></div>
+  </div>
+
+  <canvas id="preview" width="160" height="120"></canvas>
+  <p class="hint">Point the camera at a textured scene (desk, poster, keyboard) in
+  decent light. The camera signal is computed from pixels only — it never reads
+  the IMU — so texture and light are what give it confidence.</p>
+
+  <video id="video" playsinline muted></video>
+  <script src="capture.js"></script>
+</body>
+</html>
