@@ -168,23 +168,19 @@ opens a new conflict and re-arbitrates once with the fresh evidence.
 
 ## Architecture
 
-```
-phone (HTTPS/WSS)                 laptop
- gyro rad/s ──────┐   ┌─ injection (synthetic, labeled) ─ MONITOR (detect only,
- camera pixels →  ├─ ws ┤                                  state machine, wakes
- rotation proxy ──┘   └─ recorder (every session)          Gemma ONCE per conflict)
-                                                              │ compact evidence
-                                             GEMMA ARBITER (diagnose + recommend)
-                                             FALLBACK (deterministic, on timeout)
-                                                              │ proposed verdict
-                                             GUARDRAIL (safety invariants only)
-                                                              │ final decision + source
-                                             GUARDED DESCENT SIM → dashboard (WS)
-                                             MISSION LOG + GEMMA-NARRATED REPORTS
-```
+![How a conflict flows through Janus](flow_diagram.png)
 
 Trust boundary in one line: **the monitor detects, Gemma diagnoses, the
 guardrail validates, deterministic fallback guarantees completion.**
+
+Behind the four boxes: the shipped sensors are the gyro and the pixels-only
+camera proxy, and "detect" happens in the deterministic monitor on the
+laptop, which wakes Gemma exactly once per conflict. Server-side synthetic
+fault injection corrupts the stream *before* the monitor sees it (and is
+labeled on screen), every session is recorded to JSONL for replay, and the
+guarded descent sim turns the validated decision into a visible landing.
+Free-fall and impact sensing (accelerometer/barometer) are future witnesses,
+not in the current build.
 
 ## State-machine tuning
 
