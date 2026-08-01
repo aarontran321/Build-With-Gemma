@@ -6,3 +6,7 @@ numpy==2.5.1
 ollama==0.6.2
 pytest==9.1.1
 httpx==0.28.1
+# Server-side PDF export for mission reports. Pure-Python wheel on purpose:
+# no Cairo/Pango/Homebrew system libraries and no headless browser, so
+# report export works on a judging machine that is fully offline.
+reportlab==5.0.0
