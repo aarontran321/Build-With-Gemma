@@ -137,3 +137,46 @@ def test_camera_quality_collapse_is_a_conflict():
     assert ev.camera_status == "unavailable"
     assert ev.gyro_status == "reporting"
     assert ev.flow_quality < config.FLOW_CONFIDENCE_FLOOR + 0.2
+
+
+def test_escalation_rewakes_when_rail_appears_after_noise_wake():
+    """Reproduces the live-demo failure: camera noise arms a conflict and
+    wakes Gemma with no fault signature; THEN a rail fault lands. The
+    monitor must treat the escalated signature as a NEW conflict and wake
+    Gemma once more — and only once more."""
+    mon = Monitor()
+    _, t = run(mon, 0.0, 3.0, agreeing)
+
+    # noisy divergence with no hardware signature (camera over-reports)
+    noisy = lambda tt: sample(tt, 0.2, 2.4)
+    frames, t = run(mon, t, 2.0, noisy)
+    wakes = [f for f in frames if f.wake_evidence is not None]
+    assert len(wakes) == 1
+    assert wakes[0].wake_evidence.gyro_rail_score < 0.5
+    assert mon.conflict_id == 1
+
+    # now the injected rail lands while the conflict is still ACTIVE
+    railed = lambda tt: sample(tt, config.GYRO_RAIL_VALUE, agreeing(tt).flow_mag)
+    frames, t = run(mon, t, 2.0, railed)
+    wakes = [f for f in frames if f.wake_evidence is not None]
+    assert len(wakes) == 1, "escalation must wake Gemma exactly once more"
+    ev = wakes[0].wake_evidence
+    assert ev.conflict_id == 2
+    assert ev.gyro_rail_score > 0.9, "escalated evidence must show the rail"
+    assert mon.gemma_call_count == 2
+
+    # rail persisting further must NOT keep escalating
+    frames, _ = run(mon, t, 2.0, railed)
+    assert all(f.wake_evidence is None for f in frames)
+    assert mon.gemma_call_count == 2
+
+
+def test_still_gyro_with_modest_flow_noise_is_not_a_conflict():
+    """A resting phone's flow noise (up to ~2x the motion floor) must not
+    arm conflicts against a still, trustworthy gyro."""
+    mon = Monitor()
+    _, t = run(mon, 0.0, 2.0, agreeing)
+    resting = lambda tt: sample(tt, 0.08, config.MOTION_FLOOR * 1.8 * config.FLOW_NORM)
+    frames, _ = run(mon, t, 4.0, resting)
+    assert all(f.state == "NORMAL" for f in frames)
+    assert mon.gemma_call_count == 0

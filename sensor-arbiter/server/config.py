@@ -51,7 +51,12 @@ FLOW_NORM = 3.0         # typical proxy magnitude for the same motion
 # Adaptive gain: while the streams agree and both show motion, we slowly learn
 # the actual flow->gyro scale so divergence isn't an artifact of a bad guess.
 FLOW_GAIN_EMA_ALPHA = 0.02
-MOTION_FLOOR = 0.12     # normalized rate below this counts as "still"
+# Normalized rate below this counts as "still" (no comparison possible).
+# Tuned UP from 0.12 after live-phone audit: the flow proxy's at-rest noise
+# is ~0.5-0.7 units (fn ~0.17-0.23), which kept arming phantom conflicts on
+# a stationary phone. 0.28 sits above that noise floor and well below real
+# hand motion (fn ~0.4+).
+MOTION_FLOOR = 0.28
 
 # ---------------------------------------------------------------------------
 # Conflict state machine (NORMAL -> CANDIDATE -> ACTIVE -> RECOVERING -> NORMAL)

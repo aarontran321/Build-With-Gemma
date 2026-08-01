@@ -91,6 +91,9 @@ class Monitor:
         self._recover_since: Optional[float] = None
         self._cooldown_until: float = 0.0
         self._woken_for_current: bool = False
+        # health scores at the moment Gemma was last woken; used to detect
+        # a materially escalated fault while the conflict is still ACTIVE
+        self._wake_snapshot: Optional[dict] = None
 
         self._agreement_hist: deque = deque(maxlen=config.AGREEMENT_HISTORY_POINTS)
         self._last_agreement_sample_t: float = -1e9
@@ -152,8 +155,13 @@ class Monitor:
         """
         if flow_quality < config.FLOW_CONFIDENCE_FLOOR:
             return 1.0
-        if gn < config.MOTION_FLOOR and fn < config.MOTION_FLOOR:
-            return 0.0  # both quiet: nothing to disagree about
+        # A still gyro is trustworthy at rest (MEMS gyros do not hallucinate
+        # motion), so modest flow against a still gyro is estimator noise,
+        # not a conflict — live phones showed flow noise spiking to ~2x the
+        # motion floor. Large flow against a still gyro (phantom motion or a
+        # dead-at-zero gyro during real rotation) still arms normally.
+        if gn < config.MOTION_FLOOR and fn < 2.0 * config.MOTION_FLOOR:
+            return 0.0
         return float(np.clip(abs(gn - fn) / max(gn, fn, 0.25), 0.0, 1.0))
 
     # ------------------------------------------------------------------
@@ -265,7 +273,28 @@ class Monitor:
                         rail, flat, gn, fn, div, camera_status, gyro_status)
 
         elif self.state == ConflictState.ACTIVE:
-            if div < config.DIVERGENCE_RECOVERY:
+            # ESCALATION: if a decisive hardware signature appears that was
+            # absent when Gemma was woken (e.g. noise armed the conflict a
+            # beat before a rail fault landed), the evidence has materially
+            # changed class — that is a NEW conflict, with its own id and
+            # its own single arbitration. Exactly-once-per-conflict holds.
+            # Self-limiting: the new wake snapshot contains the signature,
+            # so the same escalation cannot fire twice.
+            esc = None
+            if self._wake_snapshot is not None:
+                if rail > 0.9 and self._wake_snapshot["rail"] < 0.5:
+                    esc = "rail signature appeared after wake"
+                elif (flow_quality < config.FLOW_CONFIDENCE_FLOOR
+                      and self._wake_snapshot["quality"] > 0.35):
+                    esc = "camera quality collapsed after wake"
+            if esc is not None:
+                self.conflict_id += 1
+                self.gemma_call_count += 1
+                frame.transitions.append(self._transition(t, ConflictState.ACTIVE))
+                frame.wake_evidence = self._build_evidence(
+                    t, g, f, gyro_rate, flow_rate, flow_quality,
+                    rail, flat, gn, fn, div, camera_status, gyro_status)
+            elif div < config.DIVERGENCE_RECOVERY:
                 self._recover_since = t
                 frame.transitions.append(self._transition(t, ConflictState.RECOVERING))
 
@@ -288,6 +317,7 @@ class Monitor:
     def _build_evidence(self, t, g, f, gyro_rate, flow_rate, flow_quality,
                         rail, flat, gn, fn, div, camera_status, gyro_status) -> Evidence:
         """Compact evidence for the arbiter — trends, not one flag."""
+        self._wake_snapshot = {"rail": rail, "quality": flow_quality}
         gyro_trend = self._trend(g, config.TREND_POINTS)
         flow_trend = self._trend(f, config.TREND_POINTS)
         seconds_diverged = round(t - self._diverged_since, 2) if self._diverged_since else 0.0
