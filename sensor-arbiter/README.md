@@ -107,6 +107,105 @@ Then:
 6. Fallback check: stop Ollama (`pkill ollama`), replay a golden run, and
    confirm the decision still lands, labeled **FALLBACK**.
 
+## Mission log and printable reports
+
+**Mission log** (dashboard, bottom left) — a wall-clock-stamped record of
+everything significant: state transitions, injections, the arbiter waking,
+verdicts, guardrail overrides, and descent beats (premature chute cut,
+impact, touchdown). Each line carries both the wall clock and mission
+elapsed time (`T+mm:ss.ss`); hover for the full ISO timestamp and the
+sample-stream time. Sensor samples are deliberately *not* here — they stay
+in the JSONL session recording, so the log never fills with frame-rate
+noise. **Key events** filters to conflicts/decisions/overrides/injections;
+**Clear view** clears only the screen, never the server's record.
+
+**Reports** — a report is generated automatically the moment a decision is
+made, and one whole-session report is always available.
+
+### Gemma writes the report
+
+The **same local Gemma model writes the report's prose** (`server/narrator.py`)
+— headline, summary, what happened, why, reviewer note. This is a second,
+deliberately separate use of the model:
+
+| | arbiter (`arbiter.py`) | narrator (`narrator.py`) |
+|---|---|---|
+| decides | the flight decision | nothing |
+| fenced by | the deterministic guardrail | numeric verification |
+| runs | on conflict, in the decision path | after the decision is broadcast |
+| if it fails | deterministic fallback classifier | deterministic templated text |
+
+Because the narrator makes no decision, it is allowed to write freely where
+the arbiter is not. What it may **not** do is invent facts, so the same
+"propose then verify" shape is applied to prose:
+
+1. It is handed a **fact sheet** built deterministically from the report —
+   never the raw pipeline.
+2. It returns a **schema-constrained** narrative (Ollama `format`), not free
+   text scraped afterwards.
+3. Every figure it writes is **checked back against the fact sheet**. A
+   number that is not in the record fails the report, triggering one
+   stricter retry and then the deterministic text.
+
+Narration runs *after* the decision is already on the dashboard, so a slow
+narration can never delay a flight decision or the telemetry. Stop Ollama
+and reports still generate — labelled `DETERMINISTIC TEXT` with the reason.
+The byline on every report says which engine wrote it; the tables, evidence
+and timeline around the prose are always deterministic and never
+model-written.
+
+Tuning: `NARRATOR_ENABLED=0` disables it, `NARRATOR_TIMEOUT_S` caps the wait
+(default 120 s; measured ~15–17 s for `gemma4:e4b`).
+
+### What is in a report
+
+Each answers *what happened and why* in pipeline order:
+
+| section | contents |
+|---|---|
+| Summary / What happened / Why | **written by Gemma**, verified against the record |
+| Decision | fault class, trusted/faulty sensor, action, confidence, source, latency |
+| Guardrail override | (only when one fired) invariant violated, what the model proposed, what replaced it |
+| Why this decision | 5 stages: detection → evidence → diagnosis → validation → consequence, each stating what that stage saw and what it therefore did |
+| Evidence given to the arbiter | the exact compact window the arbiter received, and nothing else |
+| Descent consequence | NAIVE vs GUARDED outcome |
+| Full event timeline | every logged event with both clocks |
+| Governing parameters | the thresholds that actually applied, so a decision can be re-checked against its own tuning |
+
+### Export as PDF
+
+Press **⬇ PDF** in the Reports panel (or **Download PDF** on the report
+page). The PDF is rendered **server-side** by `server/report_pdf.py` — no
+browser print dialog, no manual step — and downloads as
+`sensor-arbiter_<session>_<report>.pdf`. The report page still prints
+directly with Cmd/Ctrl-P if paper is what you want.
+
+ReportLab was chosen over the alternatives on purpose: WeasyPrint needs
+Cairo/Pango system libraries, and driving headless Chrome would make export
+depend on a browser being installed. ReportLab is a pure-Python wheel, so
+`pip install -r requirements.txt` is the whole setup and PDF export works on
+any judging machine, fully offline.
+
+Attribution rule enforced throughout: the diagnosis is always credited to
+whoever *proposed* it (Gemma or the fallback). The guardrail validates and
+can veto — it never classifies a fault, and no report implies it did.
+
+Endpoints, if you want the data rather than the page:
+
+```
+GET /api/log?since=<seq>          significant events since a sequence number
+GET /api/reports                  index of available reports
+GET /api/report/<id>.pdf          server-rendered PDF (id: session | latest | conflict-N)
+GET /api/report/<id>.html         the same report as a printable page
+GET /api/report/<id>.json         the same report as structured JSON
+```
+
+Reports are assembled on request from live state, never cached, so a
+printed report always shows the descent outcome true at the moment it was
+generated. Reports survive a **Reset** — the operator can still print what
+just happened — and conflict numbering that restarts after a reset never
+overwrites an earlier report.
+
 ## Fault scenarios
 
 | button | what is injected | correct diagnosis | correct action | outcome |
@@ -167,11 +266,15 @@ constants are grouped and commented for on-site adjustment.
 server/    monitor.py (detect + state machine)  arbiter.py (Gemma)
            fallback.py (minimal deterministic)  guardrail.py (invariants)
            descent.py (dual sim)  inject.py  recorder.py  main.py  config.py
+           mission_log.py (event log + report assembly)
+           narrator.py (Gemma writes the report prose, fact-verified)
+           report_html.py (report web page)  report_pdf.py (PDF export)
 phone/     index.html capture.js (gyro + pixels-only optical flow)
 dashboard/ index.html dashboard.js vendor/chart.umd.min.js (pinned, local)
 data/      three committed golden runs (jsonl)
 scripts/   make_golden.py  replay_check.py
-tests/     pytest suites for schemas, monitor, guardrail, fallback, descent
+tests/     pytest suites for schemas, monitor, guardrail, fallback, descent,
+           mission log + reports, narrator, PDF export
 ```
 
 Run tests: `python -m pytest tests/ -q`

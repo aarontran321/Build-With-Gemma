@@ -34,11 +34,40 @@ GEMMA_WARMUP = os.environ.get("GEMMA_WARMUP", "1") == "1"
 ARBITER_FORCE_FALLBACK = os.environ.get("ARBITER_FORCE_FALLBACK", "0") == "1"
 
 # ---------------------------------------------------------------------------
+# Gemma report narrator (server/narrator.py)
+# ---------------------------------------------------------------------------
+# The SAME local Gemma model writes the prose of each mission report. This is
+# a second, non-safety-critical use of the model: it makes no decision, it
+# only explains one that is already final and already validated, so it is
+# allowed to write freely where the arbiter is not.
+# It runs AFTER the decision has been broadcast, never in the decision path,
+# so a slow narration can never delay a flight decision or the telemetry.
+NARRATOR_ENABLED = os.environ.get("NARRATOR_ENABLED", "1") == "1"
+# Prose is far longer than a verdict, and this is background work with a
+# deterministic text already on screen — so the budget is generous where the
+# arbiter's is tight.
+NARRATOR_TIMEOUT_S = float(os.environ.get("NARRATOR_TIMEOUT_S", "120.0"))
+NARRATOR_RETRIES = 1   # one stricter retry if it invents a figure, then fallback
+NARRATOR_OPTIONS = {"temperature": 0.3, "num_predict": 1100}
+
+# ---------------------------------------------------------------------------
 # Server
 # ---------------------------------------------------------------------------
 SERVER_PORT = int(os.environ.get("PORT", "8000"))
 SESSIONS_DIR = os.environ.get("SESSIONS_DIR", "sessions")
 DATA_DIR = "data"
+
+# ---------------------------------------------------------------------------
+# Mission log / reports
+# ---------------------------------------------------------------------------
+# The mission log holds only SIGNIFICANT events (transitions, injections,
+# decisions, descent beats) — never the ~25 Hz samples, which stay in the
+# JSONL session recording. A long demo therefore fills this slowly; the ring
+# is capped so an unattended server cannot grow it without bound, and the
+# count of aged-out events is reported in every report header.
+MISSION_LOG_MAX_EVENTS = int(os.environ.get("MISSION_LOG_MAX_EVENTS", "2000"))
+# How many events a reconnecting dashboard is backfilled with.
+MISSION_LOG_REPLAY_ON_CONNECT = 120
 
 # ---------------------------------------------------------------------------
 # Signal normalization
