@@ -131,7 +131,7 @@ TRANSIENT_BLIP_GAP_S = 2.5
 TRANSIENT_BLIP_FACTOR = 3.0        # modest multiplier — NOT a rail signature
 
 # ---------------------------------------------------------------------------
-# Dual descent simulation (accelerated, clearly labeled SIMULATED)
+# Guarded descent simulation (accelerated, clearly labeled SIMULATED)
 # ---------------------------------------------------------------------------
 DESCENT_START_ALT_M = 3700.0       # echoes Schiaparelli's ~3.7 km
 DESCENT_NOMINAL_RATE_M_S = 80.0    # accelerated demo-scale, not flight-accurate
@@ -139,13 +139,5 @@ DESCENT_FLARE_ALT_M = 120.0        # guarded path flares here for touchdown
 DESCENT_FLARE_RATE_M_S = 12.0
 DESCENT_SAFE_IMPACT_M_S = 15.0     # touchdown at/below this counts SAFE
 DESCENT_CAUTION_RATE_M_S = 30.0    # rate while in trust-neither CAUTION mode
-FREEFALL_TERMINAL_M_S = 160.0      # after premature chute cut (~150 m/s echo)
-FREEFALL_ACCEL_M_S2 = 40.0         # accelerated
-# Naive-filter estimate-error model (demo-scale gains; the point is the
-# mechanism — corrupted rates => negative altitude estimate => premature
-# chute cut — not flight-accurate numbers):
-NAIVE_ERROR_GAIN = 300.0           # m/s of estimate error at full saturation
-NAIVE_ERROR_HALF = 0.3             # soft-saturation knee for the error rate
-NAIVE_RECONVERGE_TAU_S = 3.0       # error decays once streams agree again
-CAMERA_UNOBSERVABLE_PENALTY = 1.5  # extra error rate when trusting dead camera
+GUARDED_RECONVERGE_TAU_S = 3.0     # hold-drift error decays with this tau
 GUARDED_HOLD_DRIFT_M_S = 5.0       # small drift during conservative hold

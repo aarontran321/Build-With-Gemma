@@ -16,9 +16,7 @@ from tests.test_guardrail import evidence  # shared Evidence fixture builder
 
 STATUS = {"mode": "live", "replay_name": None, "gemma_model": "gemma4:e4b",
           "force_fallback": False, "session_log": "sessions/test.jsonl"}
-DESCENT = {"naive": {"alt": 0.0, "est_alt": -400.0, "rate": 160.0,
-                     "phase": "LANDED", "outcome": "CRASH", "impact_speed": 160.0},
-           "guarded": {"alt": 0.0, "est_alt": 5.0, "rate": 12.0,
+DESCENT = {"guarded": {"alt": 0.0, "est_alt": 5.0, "rate": 12.0,
                        "phase": "LANDED", "outcome": "SAFE", "impact_speed": 12.0}}
 
 
@@ -302,7 +300,7 @@ def test_rendered_report_shows_the_decision_and_the_consequence():
     html = report_html.render(
         log.build_report(rec.report_id, descent=DESCENT, status=STATUS))
     assert "switch_to_camera" in html
-    assert "CRASH" in html and "SAFE" in html
+    assert "SAFE" in html
     assert "Why this decision" in html
     assert "Full event timeline" in html
 

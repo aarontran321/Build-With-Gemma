@@ -216,14 +216,12 @@ def build_fact_sheet(report: dict) -> str:
                 f"source {c.get('source')}")
 
     d = report.get("descent_now") or {}
-    naive, guarded = d.get("naive", {}), d.get("guarded", {})
+    guarded = d.get("guarded", {})
     lines += [
         "",
-        "--- SIMULATED DESCENT CONSEQUENCE (two vehicles, same sensor input) ---",
-        "the NAIVE vehicle fuses the corrupted stream with no arbitration; "
-        "the GUARDED vehicle follows the validated decision",
-        f"NAIVE outcome: {naive.get('outcome')}, impact speed "
-        f"{naive.get('impact_speed')} m/s",
+        "--- SIMULATED DESCENT CONSEQUENCE (guarded vehicle) ---",
+        "the GUARDED vehicle follows the validated decision, holding a "
+        "conservative attitude freeze while arbitration is pending",
         f"GUARDED outcome: {guarded.get('outcome')}, impact speed "
         f"{guarded.get('impact_speed')} m/s",
         # Worded to remove an ambiguity a model can and did invert: the

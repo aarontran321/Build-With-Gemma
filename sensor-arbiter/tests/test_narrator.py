@@ -38,8 +38,8 @@ def test_fact_sheet_carries_every_figure_the_prose_may_need():
     for expected in ("0.99",          # gyro rail score from the evidence
                      "switch_to_camera",
                      "gyro_saturation",
-                     "CRASH", "SAFE",  # both descent outcomes
-                     "160.0", "12.0"): # both impact speeds
+                     "SAFE",           # guarded descent outcome
+                     "12.0"):          # guarded impact speed
         assert expected in sheet, f"fact sheet is missing {expected}"
 
 

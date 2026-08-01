@@ -149,7 +149,6 @@ def _outcome_class(outcome: Optional[str]) -> str:
 
 
 def _outcomes_block(descent: dict, caption: str) -> str:
-    naive = (descent or {}).get("naive", {})
     guarded = (descent or {}).get("guarded", {})
 
     def one(who: str, p: dict) -> str:
@@ -161,8 +160,8 @@ def _outcomes_block(descent: dict, caption: str) -> str:
                 f'<div class="what">{_e(p.get("outcome", "—"))}</div>'
                 f'<div class="sub">{sub}</div></div>')
 
-    return (f'<div class="outcomes">{one("NAIVE FILTER", naive)}'
-            f'{one("GUARDED (ARBITER + GUARDRAIL)", guarded)}</div>'
+    return (f'<div class="outcomes">'
+            f'{one("GUARDED VEHICLE (ARBITER + GUARDRAIL)", guarded)}</div>'
             f'<div class="note">{_e(caption)}</div>')
 
 

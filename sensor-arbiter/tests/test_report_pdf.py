@@ -122,8 +122,7 @@ def test_disclaimer_and_byline_reach_the_file():
     ("CRASH", "crash"), ("SAFE", "safe"), ("DESCENDING", "in progress")])
 def test_every_descent_outcome_renders(outcome, expected):
     r = report_with_prose()
-    r["descent_now"] = {"naive": {**DESCENT["naive"], "outcome": outcome},
-                        "guarded": {**DESCENT["guarded"], "outcome": outcome}}
+    r["descent_now"] = {"guarded": {**DESCENT["guarded"], "outcome": outcome}}
     assert report_pdf.render(r).startswith(b"%PDF-"), f"{expected} case failed"
 
 

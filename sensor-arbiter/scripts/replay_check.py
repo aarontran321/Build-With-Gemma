@@ -42,17 +42,17 @@ EXPECT = {
     "gyro_saturation": {
         "decisions": {"switch_to_camera"},
         "fault_classes": {"gyro_saturation"},
-        "naive": "CRASH", "guarded": "SAFE",
+        "guarded": "SAFE",
     },
     "camera_dark": {
         "decisions": {"continue_with_gyro"},
         "fault_classes": {"camera_obstruction_or_darkness", "camera_degradation"},
-        "naive": "CRASH", "guarded": "SAFE",
+        "guarded": "SAFE",
     },
     "transient": {
         "decisions": {"observe_transient_conflict"},
         "fault_classes": {"transient_disagreement"},
-        "naive": "SAFE", "guarded": "SAFE",
+        "guarded": "SAFE",
     },
 }
 
@@ -117,8 +117,6 @@ def check(name: str, monitor, descent, decisions, fallback_mode: bool):
     want_guarded = exp["guarded"]
     if caution:
         want_guarded = None  # caution descends slowly; may still be airborne
-    if descent.naive.outcome != exp["naive"]:
-        errs.append(f"naive outcome {descent.naive.outcome}, want {exp['naive']}")
     if want_guarded and descent.guarded.outcome != want_guarded:
         errs.append(f"guarded outcome {descent.guarded.outcome}, want {want_guarded}")
     if caution and descent.guarded.outcome == "CRASH":
@@ -148,9 +146,7 @@ async def main() -> int:
                 print(f"  note    : {decisions[0][1]}")
             for line in d.verdict.evidence[:3]:
                 print(f"  evidence: {line}")
-        print(f"  descent : naive={descent.naive.outcome} "
-              f"(impact {descent.naive.impact_speed} m/s), "
-              f"guarded={descent.guarded.outcome} "
+        print(f"  descent : guarded={descent.guarded.outcome} "
               f"(impact {descent.guarded.impact_speed} m/s)")
         print(f"  arbiter calls: {monitor.gemma_call_count}, "
               f"transitions: {[(t.from_state[0], t.to_state[0]) for t in monitor.transitions]}")

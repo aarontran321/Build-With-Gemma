@@ -32,11 +32,12 @@ the fault class, names the faulty sensor, states which sensor (if any) to
 trust and how confident it is, and recommends a safe action, as
 schema-constrained JSON. A deterministic **guardrail** validates that
 proposal against safety invariants before it becomes the flight decision.
-On the same input, the dashboard runs two simulated descents side by side:
-a **naive** filter that trusts the corrupted stream, whose altitude
-estimate dives negative and triggers a premature chute cut and a crash —
-the Schiaparelli signature — and a **guarded** vehicle that follows the
-validated diagnosis and lands.
+On the same input, the dashboard runs a clearly-labeled simulated
+**guarded** descent: the vehicle holds a conservative attitude freeze while
+arbitration is pending, follows the validated diagnosis, and lands. Left
+unarbitrated, this fault class is the Schiaparelli signature — a corrupted
+rotational rate drives the altitude estimate negative and cuts the
+parachute early — which the mission narrative and reports state explicitly.
 
 We inject the same *failure mechanism* as Schiaparelli: single-axis
 rotational-rate saturation (plus two more fault types; see below). We do
@@ -59,11 +60,11 @@ deterministic code already made:
 - **The proof it does real work: three different verdicts on three
   different injected faults.**
 
-| scenario | Gemma's verdict | action | outcome (naive vs guarded) |
+| scenario | Gemma's verdict | action | guarded outcome |
 |---|---|---|---|
-| gyro pinned at rail, camera healthy | `gyro_saturation`, trust **camera** | `switch_to_camera` | CRASH vs SAFE |
-| camera covered, gyro healthy | `camera_obstruction_or_darkness`, trust **gyro** | `continue_with_gyro` | CRASH vs SAFE |
-| brief blip, already recovering | `transient_disagreement`, no switch | `observe_transient_conflict` | SAFE vs SAFE |
+| gyro pinned at rail, camera healthy | `gyro_saturation`, trust **camera** | `switch_to_camera` | SAFE |
+| camera covered, gyro healthy | `camera_obstruction_or_darkness`, trust **gyro** | `continue_with_gyro` | SAFE |
+| brief blip, already recovering | `transient_disagreement`, no switch | `observe_transient_conflict` | SAFE |
 
 The camera-dark case shows the model does **not** reflexively trust the
 camera; the transient case shows the system does not overreact (a shorter
@@ -87,7 +88,7 @@ gemma arbiter (edge, on conflict only) →  diagnoses & recommends
 guardrail (deterministic, thin)      →  validates safety invariants only
 fallback (deterministic, minimal)    →  completes the decision if the model
                                         times out — demo can never stall
-dual descent sim                     →  shows the consequence, honestly labeled
+guarded descent sim                  →  shows the consequence, honestly labeled
 ```
 
 Key properties, enforced in code and tested:

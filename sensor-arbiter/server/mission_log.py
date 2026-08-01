@@ -468,10 +468,8 @@ class MissionLog:
         else:
             base += (" The guardrail validated the proposal against all safety "
                      "invariants and let it stand as the flight decision.")
-        naive = descent.get("naive", {})
         guarded = descent.get("guarded", {})
-        base += (f" Simulated consequence at report time: the naive filter is "
-                 f"{naive.get('outcome', '—')} and the guarded vehicle is "
+        base += (f" Simulated consequence at report time: the guarded vehicle is "
                  f"{guarded.get('outcome', '—')}.")
         return base
 
@@ -565,19 +563,18 @@ class MissionLog:
             })
 
         d = rec.descent_at_decision or {}
-        naive, guarded = d.get("naive", {}), d.get("guarded", {})
+        guarded = d.get("guarded", {})
         steps.append({
             "stage": "5 · CONSEQUENCE",
-            "actor": "Dual descent simulation (accelerated, simulated)",
-            "finding": (f"At the moment of decision the naive filter — which fuses the corrupted "
-                        f"stream with no arbitration — was at true altitude {naive.get('alt', '—')} m "
-                        f"while its own estimate read {naive.get('est_alt', '—')} m "
-                        f"({naive.get('phase', '—')}). The guarded vehicle was at "
-                        f"{guarded.get('alt', '—')} m ({guarded.get('phase', '—')})."),
-            "action": (f"The guarded vehicle followed the validated decision. Divergence between "
-                       f"the two altitude estimates is the Schiaparelli signature: a corrupted "
-                       f"rotational rate drives the altitude estimate negative, which cuts the "
-                       f"parachute early."),
+            "actor": "Guarded descent simulation (accelerated, simulated)",
+            "finding": (f"At the moment of decision the guarded vehicle was at "
+                        f"{guarded.get('alt', '—')} m with its own estimate reading "
+                        f"{guarded.get('est_alt', '—')} m ({guarded.get('phase', '—')}), "
+                        f"holding a conservative attitude freeze while arbitration ran."),
+            "action": (f"The guarded vehicle followed the validated decision. Left unarbitrated, "
+                       f"this fault class is the Schiaparelli signature: a corrupted rotational "
+                       f"rate drives the altitude estimate negative, which cuts the parachute "
+                       f"early."),
         })
         return steps
 
@@ -621,8 +618,7 @@ class MissionLog:
                         f"(mean {sum(latencies) / len(latencies):.2f} s). ")
         summary += (f"Decision sources: "
                     f"{', '.join(f'{k} ×{v}' for k, v in by_source.items()) or 'none yet'}. "
-                    f"Simulated outcome at report time — naive: "
-                    f"{descent.get('naive', {}).get('outcome', '—')}, guarded: "
+                    f"Simulated outcome at report time — guarded vehicle: "
                     f"{descent.get('guarded', {}).get('outcome', '—')}.")
 
         return {

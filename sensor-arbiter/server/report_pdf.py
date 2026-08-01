@@ -358,7 +358,7 @@ def _evidence_section(report: dict) -> List[Any]:
 
 def _outcomes_section(report: dict) -> List[Any]:
     d = report.get("descent_now") or {}
-    naive, guarded = d.get("naive", {}), d.get("guarded", {})
+    guarded = d.get("guarded", {})
 
     def cell(who: str, p: dict) -> List[Any]:
         outcome = p.get("outcome", "—")
@@ -371,17 +371,12 @@ def _outcomes_section(report: dict) -> List[Any]:
                                                       textColor=colour)),
                 Paragraph(_t(sub), S["outsub"])]
 
-    tbl = Table([[cell("NAIVE FILTER", naive),
-                  cell("GUARDED (ARBITER + GUARDRAIL)", guarded)]],
-                colWidths=[88 * mm, 88 * mm], hAlign="LEFT")
+    tbl = Table([[cell("GUARDED VEHICLE (ARBITER + GUARDRAIL)", guarded)]],
+                colWidths=[176 * mm], hAlign="LEFT")
     tbl.setStyle(TableStyle([
         ("BOX", (0, 0), (0, 0), 0.7,
-         RED if naive.get("outcome") == "CRASH" else RULE),
-        ("BOX", (1, 0), (1, 0), 0.7,
          TEAL if guarded.get("outcome") == "SAFE" else RULE),
         ("BACKGROUND", (0, 0), (0, 0),
-         RED_BG if naive.get("outcome") == "CRASH" else colors.white),
-        ("BACKGROUND", (1, 0), (1, 0),
          GREEN_BG if guarded.get("outcome") == "SAFE" else colors.white),
         ("TOPPADDING", (0, 0), (-1, -1), 7),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 7),

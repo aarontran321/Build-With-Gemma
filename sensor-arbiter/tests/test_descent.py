@@ -1,5 +1,5 @@
-"""Dual descent tests: naive crashes on persistent corruption, guarded
-lands, and a transient corrupts neither outcome."""
+"""Guarded descent tests: the vehicle holds through unresolved conflicts,
+follows the validated decision, and lands safely."""
 
 from server import config
 from server.descent import DualDescent
@@ -48,7 +48,10 @@ def run(sim, seconds, make_sample, make_state="NORMAL", decision_at=None,
         sim.step(make_sample(t), frame(t, st))
 
 
-def test_persistent_gyro_corruption_naive_crashes_guarded_lands():
+def test_guarded_lands_safe_through_persistent_corruption():
+    """A persistent gyro fault plus a validated switch decision must still
+    end in a safe landing, despite the conservative hold during the
+    unresolved window."""
     sim = DualDescent()
     inject_t = 2.0
 
@@ -62,23 +65,27 @@ def test_persistent_gyro_corruption_naive_crashes_guarded_lands():
         return "NORMAL" if t < inject_t else "ACTIVE"
 
     run(sim, 60.0, mk, state, decision_at=3.5, decision=switch_decision())
-
-    assert sim.naive.outcome == "CRASH"
-    assert sim.naive.impact_speed > 100, "echoes the ~150 m/s class of impact"
-    assert any("premature_chute_cut" in e[1] for e in sim.naive.events)
     assert sim.guarded.outcome == "SAFE"
     assert sim.guarded.impact_speed <= config.DESCENT_SAFE_IMPACT_M_S
-    assert sim.naive.phase == "LANDED" and sim.guarded.phase == "LANDED"
+    assert sim.guarded.phase == "LANDED"
 
 
-def test_no_fault_both_land_safe():
+def test_conservative_hold_drifts_bounded_while_unresolved():
+    """While a conflict is ACTIVE with no decision yet, the altitude
+    estimate drifts at the bounded hold rate, no faster."""
+    sim = DualDescent()
+    run(sim, 4.0, lambda t: sample(t), make_state="ACTIVE")
+    drift = sim.guarded.alt - sim.guarded.est_alt
+    assert 0.0 < drift <= config.GUARDED_HOLD_DRIFT_M_S * 4.0 + 1.0
+
+
+def test_no_fault_lands_safe():
     sim = DualDescent()
     run(sim, 60.0, lambda t: sample(t))
-    assert sim.naive.outcome == "SAFE"
     assert sim.guarded.outcome == "SAFE"
 
 
-def test_transient_blip_crashes_neither():
+def test_transient_blip_lands_safe():
     sim = DualDescent()
     b0, b1 = 10.0, 11.4
 
@@ -88,13 +95,10 @@ def test_transient_blip_crashes_neither():
         return sample(t)
 
     run(sim, 60.0, mk)
-    assert not any("premature_chute_cut" in e[1] for e in sim.naive.events), \
-        "naive filter must re-converge after a transient"
-    assert sim.naive.outcome == "SAFE"
     assert sim.guarded.outcome == "SAFE"
 
 
-def test_caution_decision_slows_guarded_descent():
+def test_caution_decision_slows_descent():
     sim = DualDescent()
     v = Verdict(fault_class="dual_sensor_degradation", faulty_sensor="both",
                 trusted_sensor="none", confidence=0.6, evidence=["both bad"],
@@ -104,4 +108,11 @@ def test_caution_decision_slows_guarded_descent():
                       arbitration_latency_s=1.0)
     run(sim, 20.0, lambda t: sample(t), decision_at=5.0, decision=d)
     assert sim.guarded.rate == config.DESCENT_CAUTION_RATE_M_S
-    assert sim.guarded.alt > sim.naive.alt, "caution mode descends slower"
+    # 5 s nominal + 15 s caution descends less than 20 s nominal would
+    assert sim.guarded.alt > config.DESCENT_START_ALT_M - 20.0 * config.DESCENT_NOMINAL_RATE_M_S
+
+
+def test_snapshot_has_only_guarded():
+    sim = DualDescent()
+    snap = sim.step(sample(0.0), frame(0.0))
+    assert set(snap.keys()) == {"guarded"}

@@ -15,7 +15,7 @@ const UPDATE_EVERY = 4;       // chart.update() every Nth sample (~6 Hz)
 
 let t0 = null;
 let sampleCount = 0;
-const buf = { gyro: [], flow: [], conf: [], naive: [], guarded: [], naiveEst: [] };
+const buf = { gyro: [], flow: [], conf: [], guarded: [], guardedEst: [] };
 const markers = [];           // {x, label, color} vertical lines on rate charts
 
 function push(arr, x, y) {
@@ -88,12 +88,10 @@ altOpts.scales.y.min = -100;
 const altChart = new Chart($("c-alt"), {
   type: "line",
   data: { datasets: [
-    { label: "NAIVE altitude", data: buf.naive, borderColor: "#f87171",
-      borderWidth: 2, pointRadius: 0 },
-    { label: "NAIVE computed altitude (estimate)", data: buf.naiveEst,
-      borderColor: "#f87171", borderWidth: 1, borderDash: [5, 4], pointRadius: 0 },
     { label: "GUARDED altitude", data: buf.guarded, borderColor: "#34d399",
       borderWidth: 2, pointRadius: 0 },
+    { label: "GUARDED computed altitude (estimate)", data: buf.guardedEst,
+      borderColor: "#34d399", borderWidth: 1, borderDash: [5, 4], pointRadius: 0 },
   ] },
   options: altOpts,
 });
@@ -126,9 +124,8 @@ function onState(m) {
   push(buf.flow, x, m.flow_mag);
   push(buf.conf, x, m.flow_confidence);
   // altitude series keep full history (they tell the whole story)
-  buf.naive.push({ x, y: m.descent.naive.alt });
-  buf.naiveEst.push({ x, y: Math.max(-100, m.descent.naive.est_alt) });
   buf.guarded.push({ x, y: m.descent.guarded.alt });
+  buf.guardedEst.push({ x, y: Math.max(-100, m.descent.guarded.est_alt) });
 
   if (m.injected && m.injected !== lastInjected) {
     markers.push({ x, label: "INJECT " + m.injected, color: "#fbbf24" });
@@ -150,7 +147,6 @@ function onState(m) {
     ? "SYNTHETIC: " + m.injected : "none (real input)";
   $("t-inj").style.color = m.injected ? "#fbbf24" : "";
 
-  setOutcome("naive", m.descent.naive);
   setOutcome("guarded", m.descent.guarded);
 
   if (++sampleCount % UPDATE_EVERY === 0) refreshCharts(x);
@@ -266,7 +262,6 @@ function resetView() {
   // The log deliberately survives a reset: what happened before it is still
   // part of the session record, and the server keeps those reports too.
   refreshReports();
-  setOutcome("naive", { outcome: "DESCENDING", alt: 3700, est_alt: 3700, rate: 0, impact_speed: 0 });
   setOutcome("guarded", { outcome: "DESCENDING", alt: 3700, est_alt: 3700, rate: 0, impact_speed: 0 });
   refreshCharts(0);
 }

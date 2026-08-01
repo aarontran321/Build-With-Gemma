@@ -64,7 +64,7 @@ class Hub:
         # Descent story beats are logged on CHANGE only — the sim reports
         # phase every frame, and the mission log must never carry frame-rate
         # traffic.
-        self._descent_phase = {"naive": "CHUTE", "guarded": "CHUTE"}
+        self._descent_phase = {"guarded": "CHUTE"}
         self._stream_live = False
         # Rate-limit state for NORMAL <-> CANDIDATE blips (see _log_transition).
         self._blip_window_start = -1e9
@@ -217,21 +217,15 @@ class Hub:
             severity="info", stream_t=t, detail={"suppressed_blips": n})
 
     async def _log_descent_beats(self, desc: dict, t: float) -> None:
-        """Log only when a vehicle changes phase — chute cut, touchdown,
-        impact. These are the beats the report's narrative is built from."""
-        for who in ("naive", "guarded"):
+        """Log only when the vehicle changes phase — touchdown or impact.
+        These are the beats the report's narrative is built from."""
+        for who in ("guarded",):
             phase = desc[who]["phase"]
             if phase == self._descent_phase[who]:
                 continue
             self._descent_phase[who] = phase
             p = desc[who]
-            if phase == "FREEFALL":
-                await self.note(
-                    "descent",
-                    f"{who.upper()} vehicle: premature parachute cut at "
-                    f"{p['alt']} m (its altitude estimate read {p['est_alt']} m)",
-                    severity="critical", stream_t=t, detail=dict(p))
-            elif phase == "LANDED":
+            if phase == "LANDED":
                 crashed = p["outcome"] == "CRASH"
                 await self.note(
                     "descent",
@@ -355,7 +349,7 @@ class Hub:
         self.replay_name = None
         self.last_decision = None
         self.last_evidence = None
-        self._descent_phase = {"naive": "CHUTE", "guarded": "CHUTE"}
+        self._descent_phase = {"guarded": "CHUTE"}
         self._stream_live = False
         self._blip_window_start = -1e9
         self._blip_suppressed = 0
