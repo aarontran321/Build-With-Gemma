@@ -68,6 +68,14 @@ DATA_DIR = "data"
 MISSION_LOG_MAX_EVENTS = int(os.environ.get("MISSION_LOG_MAX_EVENTS", "2000"))
 # How many events a reconnecting dashboard is backfilled with.
 MISSION_LOG_REPLAY_ON_CONNECT = 120
+# A NORMAL <-> CANDIDATE round trip is the state machine correctly IGNORING a
+# sub-threshold blip — no conflict armed, no arbiter call. It is worth showing
+# once (it demonstrates the persistence filter working), but a noisy live
+# stream can produce several per second and bury the events that matter. Blips
+# inside this window are counted and folded into one summary line instead.
+# Anything touching ACTIVE/RECOVERING is a real conflict and is never
+# rate-limited.
+MISSION_LOG_BLIP_QUIET_S = float(os.environ.get("MISSION_LOG_BLIP_QUIET_S", "10.0"))
 
 # ---------------------------------------------------------------------------
 # Signal normalization

@@ -149,12 +149,18 @@ class Monitor:
         """Normalized divergence in [0, 1].
 
         A camera that cannot see (quality below the floor) cannot corroborate
-        anything, which is itself a conflict-worthy condition, so quality
-        collapse forces full divergence. Otherwise compare normalized rates:
-        shape/trend, not units (the proxy is uncalibrated).
+        motion that IS happening, which is conflict-worthy. Otherwise compare
+        normalized rates: shape/trend, not units (the proxy is uncalibrated).
         """
-        if flow_quality < config.FLOW_CONFIDENCE_FLOOR:
-            return 1.0
+        # ORDER MATTERS. "Nothing is moving" is checked BEFORE "the camera is
+        # blind", because a blind camera only contradicts something when there
+        # is something to contradict. With the checks the other way round, a
+        # phone resting on a desk with a covered or dark lens (confidence -> 0)
+        # pins divergence at 1.0 forever; ACTIVE -> RECOVERING requires
+        # divergence to FALL, so the conflict can never clear and the demo
+        # wedges until someone presses RESET. Two streams that both report
+        # "no motion / no information" are not in disagreement.
+        #
         # A still gyro is trustworthy at rest (MEMS gyros do not hallucinate
         # motion), so modest flow against a still gyro is estimator noise,
         # not a conflict — live phones showed flow noise spiking to ~2x the
@@ -162,6 +168,11 @@ class Monitor:
         # dead-at-zero gyro during real rotation) still arms normally.
         if gn < config.MOTION_FLOOR and fn < 2.0 * config.MOTION_FLOOR:
             return 0.0
+        # Loss of redundancy is NOT swallowed by the branch above: camera
+        # health is scored separately and still reaches the dashboard and the
+        # arbiter as camera_status="unavailable".
+        if flow_quality < config.FLOW_CONFIDENCE_FLOOR:
+            return 1.0
         return float(np.clip(abs(gn - fn) / max(gn, fn, 0.25), 0.0, 1.0))
 
     # ------------------------------------------------------------------

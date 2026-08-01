@@ -115,6 +115,7 @@ function refreshCharts(latestX) {
 
 let lastInjected = null;
 let currentMode = "live";
+let conflictHasVerdict = false;   // a verdict is latched on the diagnosis panel
 
 function onState(m) {
   currentMode = m.mode;
@@ -167,7 +168,35 @@ function setOutcome(who, p) {
       : `impact ${p.impact_speed} m/s`;
 }
 
+/* A verdict is latched on screen until something clears it. Without this the
+ * panel keeps showing a resolved fault as though it were still happening: the
+ * state machine returns to NORMAL, the streams re-agree, and the dashboard
+ * still reads "GYRO SATURATION / trusted camera". Only a full RESET used to
+ * clear it, which is not obvious when the symptom is a stale red panel.
+ *
+ * The verdict itself is kept — it is what the demo is showing — but marked
+ * historical, so an active conflict and a cleared one can never be confused. */
+function markConflictResolved(conflictId) {
+  if (!conflictHasVerdict) return;          // nothing latched; nothing to clear
+  conflictHasVerdict = false;
+  $("diag").classList.add("resolved");
+  $("thinking").style.display = "none";
+  const note = $("resolved-note");
+  note.style.display = "block";
+  note.innerHTML =
+    `<b>✔ RESOLVED</b> — conflict${conflictId ? " #" + conflictId : ""} cleared: ` +
+    `the two streams agree again and the monitor is back to NORMAL. ` +
+    `The verdict above is the historical record of that conflict.`;
+}
+
+function clearResolvedMark() {
+  conflictHasVerdict = true;
+  $("diag").classList.remove("resolved");
+  $("resolved-note").style.display = "none";
+}
+
 function onArbitration(m) {
+  clearResolvedMark();                       // a new conflict is live again
   $("thinking").style.display = "block";
   $("fault").textContent = `conflict #${m.conflict_id} under diagnosis`;
   const ev = m.evidence;
@@ -185,6 +214,7 @@ function addEv(text) {
 
 function onDecision(m) {
   $("thinking").style.display = "none";
+  conflictHasVerdict = true;      // latched: a later return to NORMAL clears it
   const v = m.verdict;
   $("fault").textContent = v.fault_class.replace(/_/g, " ").toUpperCase();
   $("faulty").textContent = v.faulty_sensor;
@@ -230,6 +260,9 @@ function resetView() {
   $("evd").innerHTML = ""; $("alt-hyp").textContent = "";
   $("override").style.display = "none";
   $("diag-report").style.display = "none";
+  conflictHasVerdict = false;
+  $("diag").classList.remove("resolved");
+  $("resolved-note").style.display = "none";
   // The log deliberately survives a reset: what happened before it is still
   // part of the session record, and the server keeps those reports too.
   refreshReports();
@@ -245,7 +278,13 @@ function setPreviewMode(mode) {
     $("preview-live").style.display = "none";
     $("preview-empty").style.display = "grid";
     $("preview-empty").innerHTML = "REPLAY MODE<br>live camera preview paused";
-  } else if (!$("phone-preview").src) {
+  } else if ($("phone-preview").src) {
+    // Back to live with a frame already buffered: restore it now instead of
+    // leaving the replay overlay up until the next 4 fps frame lands.
+    $("phone-preview").style.display = "block";
+    $("preview-live").style.display = "inline-block";
+    $("preview-empty").style.display = "none";
+  } else {
     $("preview-empty").style.display = "grid";
     $("preview-empty").innerHTML = "Waiting for the phone camera…<br>Open /phone/ and enable sensors.";
   }
@@ -403,11 +442,26 @@ function connect() {
       case "state": onState(m); break;
       case "arbitration": onArbitration(m); break;
       case "decision": onDecision(m); break;
-      case "transition": break; // state chip is driven by state messages
+      // The state chip is driven by state messages, but the return to NORMAL
+      // is the one transition the diagnosis panel must react to: it is the
+      // moment the conflict is over and the latched verdict goes stale.
+      case "transition":
+        if (m.to_state === "NORMAL" && m.from_state !== "CANDIDATE")
+          markConflictResolved(m.conflict_id);
+        break;
       case "log": addLogRow(m.event); break;
       case "report_ready":
         refreshReports();
         banner(`📄 ${m.title} ready — Gemma is writing its summary. Download the PDF from the Reports panel.`, 9000);
+        break;
+      // Sent when a replay ends and the timeline returns to the phone. Without
+      // it the mode chip and camera preview stay stuck on REPLAY until the next
+      // live sample arrives — which never happens if no phone is connected.
+      case "mode":
+        currentMode = m.mode;
+        $("mode").textContent = m.mode === "replay" ? "REPLAY" : "LIVE";
+        $("mode").className = "badge " + (m.mode === "replay" ? "replay" : "live");
+        setPreviewMode(m.mode);
         break;
       case "narrative_ready":
         refreshReports();
@@ -431,7 +485,14 @@ function connect() {
         // the log history and the reports already generated
         for (const e of m.log || []) addLogRow(e);
         if (m.reports) { renderReports(m.reports); refreshReports(); }
-        if (m.last_decision) onDecision(m.last_decision);
+        if (m.last_decision) {
+          onDecision(m.last_decision);
+          // A reconnecting dashboard gets the last verdict but no transition
+          // history, so a conflict that already closed would come back looking
+          // active. hello carries the current state — trust it.
+          if (m.state === "NORMAL")
+            markConflictResolved(m.last_decision.conflict_id);
+        }
         break;
     }
   };

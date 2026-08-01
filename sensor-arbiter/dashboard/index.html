@@ -54,6 +54,16 @@
 
   /* diagnosis panel */
   #diag .fault { font-size: 1.25rem; font-weight: 800; letter-spacing: .03em; }
+  /* A verdict stays on screen after its conflict clears — it is the demo's
+     payload. `.resolved` marks it unmistakably historical so a cleared
+     conflict is never mistaken for a live one. */
+  #diag.resolved { border-color: #1f6f4a; }
+  #diag.resolved .fault, #diag.resolved .kv, #diag.resolved #confbar,
+  #diag.resolved ul#evd, #diag.resolved #alt-hyp { opacity: .55; }
+  #resolved-note { display: none; margin-top: 8px; padding: 7px 10px;
+                   border-radius: 8px; background: #06231f; color: #5eead4;
+                   border: 1px solid #2dd4bf; font-size: .78rem; }
+  #resolved-note b { letter-spacing: .06em; }
   #diag .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px;
               margin: 8px 0; font-size: .84rem; }
   #diag .kv .k { color: #8fa3bd; }
@@ -244,6 +254,7 @@
       <ul id="evd"></ul>
       <div id="alt-hyp"></div>
       <div id="override"></div>
+      <div id="resolved-note"></div>
       <a id="diag-report" class="repbtn" href="#" target="_blank" rel="noopener"
          style="display:none">📄 Open full decision report</a>
     </div>

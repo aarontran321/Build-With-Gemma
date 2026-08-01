@@ -66,6 +66,9 @@ class Hub:
         # traffic.
         self._descent_phase = {"naive": "CHUTE", "guarded": "CHUTE"}
         self._stream_live = False
+        # Rate-limit state for NORMAL <-> CANDIDATE blips (see _log_transition).
+        self._blip_window_start = -1e9
+        self._blip_suppressed = 0
 
     # ---------------- broadcast ----------------
 
@@ -161,15 +164,57 @@ class Hub:
 
     async def _log_transition(self, tr, frame) -> None:
         """State-machine transitions, with the severity a reader expects:
-        arming is critical, returning to NORMAL is a success."""
+        arming is critical, returning to NORMAL is a success.
+
+        NORMAL <-> CANDIDATE round trips are rate-limited. Those are blips the
+        persistence filter correctly rejected — no conflict, no arbiter call —
+        and a noisy live stream emits several per second, which buries the
+        arming/decision/recovery lines the log exists to show. The first blip
+        in a quiet period is logged; the rest are counted and summarised.
+        Transitions touching ACTIVE or RECOVERING are real conflict lifecycle
+        events and always log immediately.
+        """
         sev = {"ACTIVE": "critical", "CANDIDATE": "warn",
                "RECOVERING": "info", "NORMAL": "success"}.get(tr.to_state, "info")
+        detail = {"divergence": round(frame.divergence, 3),
+                  "gyro_status": frame.gyro_status,
+                  "camera_status": frame.camera_status}
+
+        is_blip = {tr.from_state, tr.to_state} == {"NORMAL", "CANDIDATE"}
+        if not is_blip:
+            # Real conflict lifecycle. Flush any pending blip summary first so
+            # the log reads in order, then log this transition unconditionally.
+            await self._flush_blip_summary(tr.t)
+            await self.note(
+                "transition", f"Conflict state {tr.from_state} → {tr.to_state}",
+                severity=sev, conflict_id=tr.conflict_id, stream_t=tr.t,
+                detail=detail)
+            return
+
+        if tr.t - self._blip_window_start >= config.MISSION_LOG_BLIP_QUIET_S:
+            await self._flush_blip_summary(tr.t)
+            self._blip_window_start = tr.t
+            self._blip_suppressed = 0
+            await self.note(
+                "transition", f"Conflict state {tr.from_state} → {tr.to_state}",
+                severity=sev, conflict_id=tr.conflict_id, stream_t=tr.t,
+                detail=detail)
+        else:
+            self._blip_suppressed += 1
+
+    async def _flush_blip_summary(self, t: float) -> None:
+        """Emit one line standing in for the blips suppressed since the last
+        logged one, so the count is never silently lost."""
+        n = self._blip_suppressed
+        self._blip_suppressed = 0
+        if n <= 0:
+            return
         await self.note(
-            "transition", f"Conflict state {tr.from_state} → {tr.to_state}",
-            severity=sev, conflict_id=tr.conflict_id, stream_t=tr.t,
-            detail={"divergence": round(frame.divergence, 3),
-                    "gyro_status": frame.gyro_status,
-                    "camera_status": frame.camera_status})
+            "transition",
+            f"+{n} further sub-threshold divergence blip{'s' if n > 1 else ''} "
+            f"ignored (below the {config.CANDIDATE_PERSISTENCE_S}s persistence "
+            f"threshold — no conflict armed)",
+            severity="info", stream_t=t, detail={"suppressed_blips": n})
 
     async def _log_descent_beats(self, desc: dict, t: float) -> None:
         """Log only when a vehicle changes phase — chute cut, touchdown,
@@ -312,6 +357,8 @@ class Hub:
         self.last_evidence = None
         self._descent_phase = {"naive": "CHUTE", "guarded": "CHUTE"}
         self._stream_live = False
+        self._blip_window_start = -1e9
+        self._blip_suppressed = 0
         self.recorder.event("reset", {"mode": mode, "wall_t": time.time()})
         # Past reports survive a reset — the operator may still want to print
         # what just happened — but conflict numbering starts over.
@@ -346,6 +393,16 @@ class Hub:
                                 severity="success", detail={"name": name})
             except asyncio.CancelledError:
                 pass
+            finally:
+                # Hand the timeline back to the phone. "replay wins over live"
+                # must hold only while a replay is actually running: leaving
+                # mode="replay" after it ends silently drops every live sample
+                # in process_sample and every frame in the preview relay, so
+                # the phone looks dead until someone presses RESET.
+                if self.mode == "replay":
+                    self.mode = "live"
+                    self.replay_name = None
+                    await self.broadcast({"type": "mode", "mode": "live"})
 
         self._replay_task = asyncio.create_task(run())
 
