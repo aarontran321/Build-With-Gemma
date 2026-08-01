@@ -11,9 +11,9 @@ watches the two streams at frame rate; when they persistently conflict, a
 **local Gemma model is woken exactly once** to diagnose the fault, decide
 which sensor (if any) to trust, and recommend a safe action. A deterministic
 guardrail validates that proposal against safety invariants before it becomes
-the flight decision. The dashboard shows a simulated naive descent that
-trusts the corrupted sensor and crashes, next to the guarded descent that
-lands.
+the flight decision. The dashboard shows a clearly-labeled simulated
+**guarded descent** that holds a conservative attitude freeze while
+arbitration runs, follows the validated verdict, and lands.
 
 Fault class modeled: single-axis rotational-rate saturation — the same
 failure mechanism as ESA's 2016 Schiaparelli loss (Ferri et al.,
@@ -36,7 +36,7 @@ uvicorn server.main:app --host 0.0.0.0 --port 8000
 
 Open http://localhost:8000/dashboard/ on the laptop, pick a golden run,
 press **▶ Replay golden run**. The full demonstration — conflict, Gemma
-diagnosis, guardrail validation, dual descent outcome — runs from the
+diagnosis, guardrail validation, guarded descent outcome — runs from the
 committed recording with no phone and the network off.
 
 Headless verification of all three golden runs:
@@ -114,13 +114,11 @@ phone runs that code, so only the real phone demonstrates it.
 
 `--source-fault SCENARIO` corrupts the stream at the source instead of on the
 server, which shows the monitor detecting a fault nothing told it about.
-Caveat: the descent sim measures naive error against the injector-recorded
-clean values (`descent.py::_naive_error_rate`), so a source-applied fault
-leaves the NAIVE vehicle with no ground truth and it will not crash.
-Arbitration still runs. For the full dual-descent story, use server-side
-injection.
+Since the guarded descent never needs the injector's clean-value record,
+source-applied faults and server-side injection tell the same descent story;
+arbitration is identical either way.
 
-Timing: the descent runs from 3700 m at 80 m/s, so both vehicles touch down
+Timing: the descent runs from 3700 m at 80 m/s, so the vehicle touches down
 about 46 s after the stream starts. Inject within the first ~25 s, or press
 **RESET** first.
 
@@ -214,7 +212,7 @@ Then:
    Injection is deterministic and synthetic — it overwrites the stream
    server-side before the monitor sees it, and is labeled on screen.
 4. Watch: conflict state machine arms → Gemma diagnosis appears with its
-   source label → dual descent shows NAIVE crash vs GUARDED landing.
+   source label → the guarded vehicle rides out the conflict and lands SAFE.
 5. Show all three scenarios — Gemma returns a different verdict for each,
    including trusting the **gyro** (camera dark) and merely observing
    (transient).
@@ -225,8 +223,7 @@ Then:
 
 **Mission log** (dashboard, bottom left) — a wall-clock-stamped record of
 everything significant: state transitions, injections, the arbiter waking,
-verdicts, guardrail overrides, and descent beats (premature chute cut,
-impact, touchdown). Each line carries both the wall clock and mission
+verdicts, guardrail overrides, and descent beats (touchdown or impact). Each line carries both the wall clock and mission
 elapsed time (`T+mm:ss.ss`); hover for the full ISO timestamp and the
 sample-stream time. Sensor samples are deliberately *not* here — they stay
 in the JSONL session recording, so the log never fills with frame-rate
@@ -282,7 +279,7 @@ Each answers *what happened and why* in pipeline order:
 | Guardrail override | (only when one fired) invariant violated, what the model proposed, what replaced it |
 | Why this decision | 5 stages: detection → evidence → diagnosis → validation → consequence, each stating what that stage saw and what it therefore did |
 | Evidence given to the arbiter | the exact compact window the arbiter received, and nothing else |
-| Descent consequence | NAIVE vs GUARDED outcome |
+| Descent consequence | GUARDED vehicle outcome |
 | Full event timeline | every logged event with both clocks |
 | Governing parameters | the thresholds that actually applied, so a decision can be re-checked against its own tuning |
 
@@ -322,33 +319,30 @@ overwrites an earlier report.
 
 ## Fault scenarios
 
-| button | what is injected | correct diagnosis | correct action | outcome |
+| button | what is injected | correct diagnosis | correct action | guarded outcome |
 |---|---|---|---|---|
-| ⚡ gyro saturation | gyro pinned at 34 rad/s (rail) for 10 s | `gyro_saturation`, trust camera | `switch_to_camera` | naive CRASH, guarded SAFE |
-| 🕶 camera dark | flow confidence → ~0 for 10 s | `camera_obstruction_or_darkness`, trust gyro | `continue_with_gyro` | naive CRASH, guarded SAFE |
-| 〰 transient | 0.4 s blip (ignored) + 2 s blip (arbitrated) | `transient_disagreement` | `observe_transient_conflict` | both SAFE |
+| ⚡ gyro saturation | gyro pinned at 34 rad/s (rail) for 10 s | `gyro_saturation`, trust camera | `switch_to_camera` | SAFE |
+| 🕶 camera dark | flow confidence → ~0 for 10 s | `camera_obstruction_or_darkness`, trust gyro | `continue_with_gyro` | SAFE |
+| 〰 transient | 0.4 s blip (ignored) + 2 s blip (arbitrated) | `transient_disagreement` | `observe_transient_conflict` | SAFE |
 
 Each scenario has a committed golden run in `data/` reachable from the
 dashboard with no phone.
 
 ## Architecture
 
-```
-phone (HTTPS/WSS)                 laptop
- gyro rad/s ──────┐   ┌─ injection (synthetic, labeled) ─ MONITOR (detect only,
- camera pixels →  ├─ ws ┤                                  state machine, wakes
- rotation proxy ──┘   └─ recorder (every session)          Gemma ONCE per conflict)
-                                                              │ compact evidence
-                                             GEMMA ARBITER (diagnose + recommend)
-                                             FALLBACK (deterministic, on timeout)
-                                                              │ proposed verdict
-                                             GUARDRAIL (safety invariants only)
-                                                              │ final decision + source
-                                             DUAL DESCENT SIM → dashboard (WS)
-```
+![How a conflict flows through Janus](sensor-arbiter/flow_diagram.png)
 
 Trust boundary in one line: **the monitor detects, Gemma diagnoses, the
 guardrail validates, deterministic fallback guarantees completion.**
+
+Behind the four boxes: the shipped sensors are the gyro and the pixels-only
+camera proxy, and "detect" happens in the deterministic monitor on the
+laptop, which wakes Gemma exactly once per conflict. Server-side synthetic
+fault injection corrupts the stream *before* the monitor sees it (and is
+labeled on screen), every session is recorded to JSONL for replay, and the
+guarded descent sim turns the validated decision into a visible landing.
+Free-fall and impact sensing (accelerometer/barometer) are future witnesses,
+not in the current build.
 
 ## State-machine tuning
 
@@ -379,7 +373,7 @@ constants are grouped and commented for on-site adjustment.
 ```
 server/    monitor.py (detect + state machine)  arbiter.py (Gemma)
            fallback.py (minimal deterministic)  guardrail.py (invariants)
-           descent.py (dual sim)  inject.py  recorder.py  main.py  config.py
+           descent.py (guarded sim)  inject.py  recorder.py  main.py  config.py
            mission_log.py (event log + report assembly)
            narrator.py (Gemma writes the report prose, fact-verified)
            report_html.py (report web page)  report_pdf.py (PDF export)
