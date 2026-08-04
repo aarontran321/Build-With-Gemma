@@ -1,6 +1,6 @@
 # Janus — Sensor Arbiter
 
-[Demo video](https://youtube.com/watch?v=wkapsjGOQJw&si=Z9k1wKj1oSZ-HFth)
+[![Demo video](https://img.youtube.com/vi/wkapsjGOQJw/maxresdefault.jpg)](https://youtube.com/watch?v=wkapsjGOQJw)
 
 **Deep-space descent fault arbitration with edge Gemma.** Named for the
 two-faced Roman god of gates and transitions: Janus watches two independent
